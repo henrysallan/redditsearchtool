@@ -6,19 +6,64 @@ import praw
 import anthropic
 import os
 import json
+import logging
+import time
+import uuid
+import traceback
 
 # Load environment variables
 load_dotenv()
 
 # Create Flask app
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+CORS(app)
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("functions")
+
+@app.before_request
+def _before_request():
+    request._start_time = time.time()
+    request._req_id = str(uuid.uuid4())
+    logger.info(
+        json.dumps({
+            "event": "request_start",
+            "id": request._req_id,
+            "method": request.method,
+            "path": request.path,
+            "remote_addr": request.headers.get('X-Forwarded-For', request.remote_addr),
+            "user_agent": request.headers.get('User-Agent')
+        })
+    )
+
+@app.after_request
+def _after_request(response):
+    try:
+        duration_ms = int((time.time() - getattr(request, "_start_time", time.time())) * 1000)
+        logger.info(
+            json.dumps({
+                "event": "request_end",
+                "id": getattr(request, "_req_id", "n/a"),
+                "method": request.method,
+                "path": request.path,
+                "status": response.status_code,
+                "duration_ms": duration_ms,
+            })
+        )
+    except Exception:
+        pass
+    return response
 
 @app.route('/api/estimate-cost', methods=['POST'])
 @app.route('/estimate-cost', methods=['POST'])
 def estimate_cost():
     """Estimate the cost of a search request"""
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
+    logger.info(json.dumps({
+        "event": "estimate_cost_params",
+        "id": getattr(request, "_req_id", "n/a"),
+        "keys": list(data.keys()),
+    }))
     max_posts = data.get('max_posts', 3)
     model = data.get('model', 'claude-3-5-sonnet-20241022')
     
@@ -93,7 +138,13 @@ def estimate_cost():
 def search_summarize():
     """Simplified search and summarize endpoint for Firebase Functions"""
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
+        logger.info(json.dumps({
+            "event": "search_summarize_params",
+            "id": getattr(request, "_req_id", "n/a"),
+            "keys": list(data.keys()),
+            "content_length": request.headers.get('Content-Length')
+        }))
         query = data.get('query')
         max_posts = data.get('max_posts', 3)
         model = data.get('model', 'claude-3-5-sonnet-20241022')
@@ -124,9 +175,23 @@ def search_summarize():
         })
         
     except Exception as e:
+        logger.error(json.dumps({
+            "event": "error",
+            "id": getattr(request, "_req_id", "n/a"),
+            "path": request.path,
+            "message": str(e),
+            "trace": traceback.format_exc()
+        }))
         return jsonify({
-            'error': f'Search failed: {str(e)}',
-            'details': 'Firebase Functions error'
+            'error': 'Search failed',
+            'details': str(e),
+            'request_id': getattr(request, "_req_id", "n/a"),
+            'env_present': {
+                'ANTHROPIC_API_KEY': bool(os.environ.get('ANTHROPIC_API_KEY')),
+                'REDDIT_CLIENT_ID': bool(os.environ.get('REDDIT_CLIENT_ID')),
+                'REDDIT_CLIENT_SECRET': bool(os.environ.get('REDDIT_CLIENT_SECRET')),
+                'REDDIT_USER_AGENT': bool(os.environ.get('REDDIT_USER_AGENT')),
+            }
         }), 500
 
 # Health check endpoint
@@ -137,7 +202,8 @@ def health_check():
     return jsonify({
         'status': 'healthy',
         'message': 'Firebase Functions backend is running',
-        'timestamp': str(os.environ.get('FUNCTION_REGION', 'local')),
+        'region': os.environ.get('FUNCTION_REGION', 'local'),
+        'timestamp': int(time.time()),
         'version': '1.0.0',
         'env_present': {
             'ANTHROPIC_API_KEY': bool(os.environ.get('ANTHROPIC_API_KEY')),
