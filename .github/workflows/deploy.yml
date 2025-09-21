@@ -3,15 +3,7 @@ name: Deploy Firebase (Functions + Hosting)
 on:
   push:
     branches: [ main ]
-    paths:
-      - 'functions/**'
-      - 'src/**'
-      - 'index.html'
-      - 'vite.config.ts'
-      - 'package.json'
-      - 'tsconfig.json'
-      - 'firebase.json'
-      - '.firebaserc'
+  workflow_dispatch:
 
 permissions:
   contents: read
