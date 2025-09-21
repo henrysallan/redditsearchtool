@@ -67,3 +67,9 @@ playwright/.cache/
 # Flask
 instance/
 .webassets-cache
+
+# Firebase
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+.runtimeconfig.json

@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import { apiCall } from './api'
 
 type ApiResponse = {
   summary: string
@@ -62,9 +63,8 @@ export default function App() {
   React.useEffect(() => {
     const updateCostEstimate = async () => {
       try {
-        const res = await fetch('/api/estimate-cost', {
+        const res = await apiCall('/api/estimate-cost', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
             max_posts: maxPosts, 
             model, 
@@ -90,9 +90,8 @@ export default function App() {
     setError(null)
     setResult(null)
     try {
-      const res = await fetch('/api/search-summarize', {
+      const res = await apiCall('/api/search-summarize', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           query: q,
           max_posts: maxPosts,

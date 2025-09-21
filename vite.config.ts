@@ -6,10 +6,17 @@ export default defineConfig({
   base: '/redditsearchtool/',
   server: {
     proxy: {
-      '/api': 'http://localhost:5001'
+      '/api': {
+        target: process.env.VITE_API_URL || 'http://localhost:5001',
+        changeOrigin: true
+      }
     }
   },
   build: {
     outDir: 'dist'
+  },
+  define: {
+    // Make environment variables available to the client
+    'process.env.VITE_API_URL': JSON.stringify(process.env.VITE_API_URL)
   }
 })
