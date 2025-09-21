@@ -52,10 +52,19 @@ jobs:
 
       - name: Prepare Python Functions environment
         run: |
-          python -m venv functions/venv
-          . functions/venv/bin/activate
-          pip install --upgrade pip
-          pip install -r functions/requirements.txt
+          rm -rf functions/venv || true
+          python -m venv functions/venv || python3 -m venv functions/venv
+          if [ ! -x functions/venv/bin/python ]; then
+            echo "venv creation failed; printing diagnostics" >&2
+            which python || true
+            python --version || true
+            which python3 || true
+            python3 --version || true
+            ls -la functions || true
+            exit 1
+          fi
+          functions/venv/bin/python -m pip install --upgrade pip
+          functions/venv/bin/python -m pip install -r functions/requirements.txt
 
       - name: Build Frontend
         run: |
