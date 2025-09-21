@@ -1,4 +1,4 @@
-import functions_framework
+from firebase_functions import https_fn
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -214,11 +214,30 @@ def health_check():
     })
 
 # Firebase Functions entry point
-@functions_framework.http
-def api(request):
+@https_fn.on_request(
+    secrets=[
+        "ANTHROPIC_API_KEY",
+        "REDDIT_CLIENT_ID", 
+        "REDDIT_CLIENT_SECRET",
+        "REDDIT_USER_AGENT"
+    ]
+)
+def api(req: https_fn.Request) -> https_fn.Response:
     """Firebase Functions HTTP entry point"""
-    with app.app_context():
-        return app.full_dispatch_request()
+    # Create a Flask request context
+    with app.test_request_context(
+        path=req.path,
+        method=req.method,
+        headers=dict(req.headers),
+        query_string=req.query_string.encode() if req.query_string else b'',
+        data=req.get_data()
+    ):
+        try:
+            response = app.full_dispatch_request()
+            return response
+        except Exception as e:
+            logger.error(f"Error processing request: {str(e)}")
+            return {"error": "Internal server error"}, 500
 
 if __name__ == '__main__':
     # For local development
