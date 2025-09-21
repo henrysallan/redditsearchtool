@@ -12,12 +12,18 @@ const getApiBaseUrl = (): string => {
   }
   
   // If deployed on GitHub Pages, use Firebase Functions directly
-  return 'https://us-central1-reddit-search-tool.cloudfunctions.net'
+  // Use the deployed Cloud Functions URL with the function name appended
+  // Note: Project ID is 'redditsearchtool' (no hyphens)
+  return 'https://us-central1-redditsearchtool.cloudfunctions.net/api'
 }
 
 export const apiCall = async (endpoint: string, options: RequestInit = {}) => {
   const baseUrl = getApiBaseUrl()
-  const url = baseUrl ? `${baseUrl}${endpoint}` : endpoint
+  // Avoid double '/api' when baseUrl already ends with '/api' and endpoint starts with '/api/'
+  const normalizedEndpoint = baseUrl.endsWith('/api') && endpoint.startsWith('/api/')
+    ? endpoint.slice(4)
+    : endpoint
+  const url = baseUrl ? `${baseUrl}${normalizedEndpoint}` : normalizedEndpoint
   
   // Add default headers
   const defaultHeaders = {

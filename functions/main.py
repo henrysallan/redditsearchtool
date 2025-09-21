@@ -15,6 +15,7 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
 @app.route('/api/estimate-cost', methods=['POST'])
+@app.route('/estimate-cost', methods=['POST'])
 def estimate_cost():
     """Estimate the cost of a search request"""
     data = request.get_json()
@@ -88,6 +89,7 @@ def estimate_cost():
         })
 
 @app.route('/api/search-summarize', methods=['POST'])
+@app.route('/search-summarize', methods=['POST'])
 def search_summarize():
     """Simplified search and summarize endpoint for Firebase Functions"""
     try:
@@ -129,6 +131,7 @@ def search_summarize():
 
 # Health check endpoint
 @app.route('/api/health', methods=['GET'])
+@app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
     return jsonify({
