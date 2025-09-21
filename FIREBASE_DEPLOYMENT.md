@@ -180,6 +180,42 @@ npm run dev  # Runs both frontend and Flask backend
    npm run build  # Test build locally
    ```
 
+### Firebase CLI cannot find Python Functions SDK
+
+If you see errors like:
+
+```
+Error: Failed to find location of Firebase Functions SDK. Did you forget to run '. "functions/venv/bin/activate" && python3.12 -m pip install -r requirements.txt'?
+```
+
+Fix steps that worked:
+
+1) Ensure the Firebase Functions SDK for Python is installed:
+```bash
+cd functions
+python3.12 -m venv venv
+. venv/bin/activate
+pip install -r requirements.txt
+```
+Add this to `functions/requirements.txt` if missing:
+```
+firebase-functions==0.4.2
+```
+
+2) On Apple Silicon, align architectures to avoid cffi/cryptography errors. Since Node/Firebase CLI may be x86_64:
+```bash
+cd functions
+rm -rf venv
+arch -x86_64 python3.12 -m venv venv
+source venv/bin/activate
+arch -x86_64 pip install --no-cache-dir -r requirements.txt
+```
+
+Then redeploy from project root:
+```bash
+firebase deploy --only functions
+```
+
 ## 🚦 Next Steps
 
 1. **Create Firebase project** and update `.firebaserc`

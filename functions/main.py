@@ -135,7 +135,13 @@ def health_check():
         'status': 'healthy',
         'message': 'Firebase Functions backend is running',
         'timestamp': str(os.environ.get('FUNCTION_REGION', 'local')),
-        'version': '1.0.0'
+        'version': '1.0.0',
+        'env_present': {
+            'ANTHROPIC_API_KEY': bool(os.environ.get('ANTHROPIC_API_KEY')),
+            'REDDIT_CLIENT_ID': bool(os.environ.get('REDDIT_CLIENT_ID')),
+            'REDDIT_CLIENT_SECRET': bool(os.environ.get('REDDIT_CLIENT_SECRET')),
+            'REDDIT_USER_AGENT': bool(os.environ.get('REDDIT_USER_AGENT')),
+        }
     })
 
 # Firebase Functions entry point
