@@ -1,0 +1,6 @@
+Flask
+praw
+python-dotenv
+anthropic
+playwright
+asyncio
