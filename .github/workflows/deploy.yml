@@ -30,6 +30,11 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -44,6 +49,13 @@ jobs:
 
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
+
+      - name: Prepare Python Functions environment
+        run: |
+          python -m venv functions/venv
+          . functions/venv/bin/activate
+          pip install --upgrade pip
+          pip install -r functions/requirements.txt
 
       - name: Build Frontend
         run: |

@@ -1,6 +1,6 @@
 # Firebase Deployment Guide
 
-This project is now configured to deploy both frontend and backend using Firebase!
+This project deploys both frontend (Hosting) and backend (Cloud Functions, Python) on Firebase.
 
 ## 🔥 Firebase Setup
 
@@ -8,7 +8,7 @@ This project is now configured to deploy both frontend and backend using Firebas
 
 1. Go to [Firebase Console](https://console.firebase.google.com/)
 2. Click "Create a project"
-3. Name it: `reddit-search-tool` (or update `.firebaserc` if different)
+3. Name it: `redditsearchtool` (or update `.firebaserc` if different)
 4. Enable Google Analytics (optional)
 5. Wait for project creation
 
@@ -41,11 +41,9 @@ firebase init
 # - Use existing project: reddit-search-tool
 ```
 
-## 🚀 Deployment Options
+## 🚀 Deployment
 
-### Option 1: Firebase Hosting + Functions (Recommended)
-
-**Complete full-stack hosting on Firebase:**
+**Full-stack hosting on Firebase:**
 
 ```bash
 # Build the frontend
@@ -55,8 +53,8 @@ npm run build
 firebase deploy
 
 # Or deploy separately:
-firebase deploy --only hosting  # Frontend only
-firebase deploy --only functions  # Backend only
+firebase deploy --only hosting   # Frontend only
+firebase deploy --only functions # Backend only
 ```
 
 **Benefits:**
@@ -66,21 +64,7 @@ firebase deploy --only functions  # Backend only
 - ✅ Serverless backend scaling
 - ✅ Firebase's generous free tier
 
-### Option 2: GitHub Pages + Firebase Functions
-
-**Frontend on GitHub Pages, backend on Firebase:**
-
-```bash
-# Deploy backend to Firebase
-firebase deploy --only functions
-
-# Frontend deploys automatically via GitHub Actions
-git push origin main
-```
-
-**Configuration needed:**
-- Update `src/api.ts` with your Firebase Functions URL
-- Set GitHub repository secrets for CI/CD
+> We no longer use GitHub Pages. Hosting is served via Firebase for same-origin API calls and simpler deploys.
 
 ## 🔧 Environment Variables
 
@@ -94,24 +78,25 @@ REDDIT_CLIENT_SECRET=your_reddit_client_secret
 REDDIT_USER_AGENT=your_reddit_user_agent
 ```
 
-### Firebase Functions
+### Firebase Functions Secrets (Python)
 
-Set environment variables:
+Set secrets (one-time):
 ```bash
-# Set secrets for Firebase Functions
-firebase functions:config:set anthropic.api_key="your_anthropic_api_key"
-firebase functions:config:set reddit.client_id="your_reddit_client_id"
-firebase functions:config:set reddit.client_secret="your_reddit_client_secret"
-firebase functions:config:set reddit.user_agent="your_reddit_user_agent"
+firebase functions:secrets:set ANTHROPIC_API_KEY
+firebase functions:secrets:set REDDIT_CLIENT_ID
+firebase functions:secrets:set REDDIT_CLIENT_SECRET
+firebase functions:secrets:set REDDIT_USER_AGENT
 
-# Deploy with new config
+# Deploy to attach newly set secrets
 firebase deploy --only functions
 ```
 
-### GitHub Actions (for Option 2)
+### GitHub Actions
+
+We use a unified workflow at `.github/workflows/deploy.yml` to build and deploy both Hosting and Functions on push to `main`.
 
 Add to GitHub repository secrets:
-- `FIREBASE_TOKEN`: Get with `firebase login:ci`
+- `GCP_SA_KEY`: Google service account JSON with deploy permissions
 
 ## 📁 Project Structure
 
@@ -120,8 +105,7 @@ project/
 ├── src/                    # React frontend
 ├── functions/              # Firebase Functions (Python)
 │   ├── main.py            # Flask app entry point
-│   ├── requirements.txt   # Python dependencies
-│   └── package.json       # Node.js config for Functions
+│   └── requirements.txt   # Python dependencies
 ├── firebase.json          # Firebase configuration
 ├── .firebaserc           # Firebase project settings
 └── .github/workflows/    # CI/CD configuration
@@ -129,7 +113,7 @@ project/
 
 ## 🔄 Local Development
 
-### Option A: Full Firebase Emulation
+### Option A: Firebase Emulation (optional)
 ```bash
 # Start Firebase emulators
 firebase emulators:start
@@ -138,7 +122,7 @@ firebase emulators:start
 npm run dev
 ```
 
-### Option B: Original Flask Server
+### Option B: Original Flask Server (legacy dev)
 ```bash
 # Start original Flask server
 npm run dev  # Runs both frontend and Flask backend
@@ -225,8 +209,8 @@ firebase deploy --only functions
 5. **Configure custom domain** (optional)
 
 Your app will be available at:
-- `https://reddit-search-tool.web.app`
-- `https://reddit-search-tool.firebaseapp.com`
+- `https://redditsearchtool.web.app`
+- `https://redditsearchtool.firebaseapp.com`
 
 ## 🎯 Benefits of Firebase Deployment
 
