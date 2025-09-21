@@ -49,38 +49,20 @@ This will start the Vite frontend on `http://localhost:5173` and the Flask backe
 
 ## Deployment
 
-This project supports multiple deployment options:
-
-### 🔥 Firebase (Recommended)
-**Full-stack deployment with backend and frontend on Firebase:**
-- Complete serverless solution
-- No CORS issues (same domain)
-- Auto-scaling backend
-- Global CDN for frontend
+We deploy the entire app with Firebase (Hosting + Functions). Push to `main` and GitHub Actions will build and deploy to Firebase Hosting, with `/api/**` routed to your Cloud Function.
 
 ```bash
-firebase deploy
+# One-time setup
+firebase functions:secrets:set ANTHROPIC_API_KEY
+firebase functions:secrets:set REDDIT_CLIENT_ID
+firebase functions:secrets:set REDDIT_CLIENT_SECRET
+firebase functions:secrets:set REDDIT_USER_AGENT
+
+# Manual deploy (optional; CI runs on push)
+npm run build && firebase deploy
 ```
 
-See [FIREBASE_DEPLOYMENT.md](./FIREBASE_DEPLOYMENT.md) for detailed setup instructions.
-
-### 🐙 GitHub Pages + Firebase Functions
-**Frontend on GitHub Pages, backend on Firebase:**
-- Every push to `main` or `master` branch triggers automatic deployment
-- GitHub Actions builds and deploys the React frontend
-- Firebase Functions hosts the Python backend
-- Live site: `https://henrysallan.github.io/redditsearchtool`
-
-### Setup GitHub Pages
-1. Go to repository Settings > Pages
-2. Set source to "GitHub Actions"
-3. The workflow will handle the rest automatically
-
-⚠️ **Note**: For full functionality, you'll need to set up Firebase Functions for the backend.
-
-For complete deployment documentation, see:
-- [FIREBASE_DEPLOYMENT.md](./FIREBASE_DEPLOYMENT.md) - Firebase setup
-- [DEPLOYMENT.md](./DEPLOYMENT.md) - GitHub Pages setup
+Docs: [FIREBASE_DEPLOYMENT.md](./FIREBASE_DEPLOYMENT.md)
 
 ## How It Works
 
