@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users can read and write their own user document
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Users can read and write their own search history
+    match /users/{userId}/searches/{searchId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Allow users to list their own searches
+    match /users/{userId}/searches/{searchId} {
+      allow list: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
