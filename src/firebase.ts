@@ -3,12 +3,13 @@ import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBl_YtWCxYKJRzgYKgXKvLlgJXjcOhwP9Y",
+  apiKey: "AIzaSyBR9KKGW_eed0vc-fMT00VdKTQrrUrF9Bg",
   authDomain: "redditsearchtool.firebaseapp.com",
   projectId: "redditsearchtool",
   storageBucket: "redditsearchtool.firebasestorage.app",
-  messagingSenderId: "747823491710",
-  appId: "1:747823491710:web:1f3ebcac4b1b58d3b8c4f8"
+  messagingSenderId: "223812591072",
+  appId: "1:223812591072:web:45ddb0fb001173fcea9f85",
+  measurementId: "G-30BT54FWR7"
 };
 
 // Initialize Firebase

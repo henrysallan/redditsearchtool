@@ -12,6 +12,10 @@ function AppContent() {
   const [searchResults, setSearchResults] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [maxPosts, setMaxPosts] = useState(10);
+  const [model, setModel] = useState('claude-3-5-sonnet-20241022');
+  const [useWebSearch, setUseWebSearch] = useState(true);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
@@ -26,7 +30,12 @@ function AppContent() {
     try {
       const response = await apiCall('/api/search-summarize', {
         method: 'POST',
-        body: JSON.stringify({ query: searchQuery })
+        body: JSON.stringify({ 
+          query: searchQuery,
+          max_posts: maxPosts,
+          model: model,
+          web_search_mode: useWebSearch
+        })
       });
 
       if (!response.ok) {
@@ -40,9 +49,9 @@ function AppContent() {
       if (user) {
         await saveSearchToHistory(user.uid, {
           query: searchQuery,
-          maxPosts: 10,
-          model: 'claude-3-5-sonnet',
-          useWebSearch: true,
+          maxPosts: maxPosts,
+          model: model,
+          useWebSearch: useWebSearch,
           summary: data.summary || 'No results',
           searchMode: 'standard'
         });
@@ -73,16 +82,19 @@ function AppContent() {
         onSelectSearch={(search) => {
           setSearchQuery(search.query);
           setSearchResults(search.summary);
+          setMaxPosts(search.maxPosts);
+          setModel(search.model);
+          setUseWebSearch(search.useWebSearch);
           setSidebarOpen(false);
         }}
       />
       
       <div style={{
         backgroundColor: '#ffffff',
-        border: '2px solid #000000',
-        borderRadius: '12px',
+        border: '1px solid #d1d5db',
+        borderRadius: '8px',
         padding: '32px',
-        boxShadow: '4px 4px 0px #000000',
+        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
         maxWidth: '800px',
         margin: '40px auto',
         marginLeft: sidebarOpen ? '340px' : 'auto',
@@ -92,7 +104,7 @@ function AppContent() {
           margin: '0 0 24px 0', 
           fontSize: '32px', 
           fontWeight: 'bold',
-          color: '#000000'
+          color: '#111827'
         }}>
           Reddit Search Tool
         </h1>
@@ -110,27 +122,156 @@ function AppContent() {
               width: '100%',
               padding: '16px',
               fontSize: '16px',
-              border: '2px solid #000000',
-              borderRadius: '8px',
+              border: '1px solid #d1d5db',
+              borderRadius: '6px',
               marginBottom: '16px',
               fontFamily: 'inherit',
-              backgroundColor: isLoading ? '#f3f4f6' : '#ffffff'
+              backgroundColor: isLoading ? '#f9fafb' : '#ffffff',
+              outline: 'none',
+              transition: 'border-color 0.15s ease',
+              boxSizing: 'border-box'
             }}
+            onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
+            onBlur={(e) => e.target.style.borderColor = '#d1d5db'}
           />
+          
+          {/* Advanced Options Toggle */}
+          <button
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            style={{
+              backgroundColor: 'transparent',
+              color: '#6b7280',
+              border: '1px solid #d1d5db',
+              padding: '8px 16px',
+              fontSize: '14px',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              marginBottom: '16px',
+              fontWeight: '500'
+            }}
+          >
+            {showAdvanced ? '↑ Hide' : '↓ Show'} Advanced Options
+          </button>
+
+          {/* Advanced Options */}
+          {showAdvanced && (
+            <div style={{
+              backgroundColor: '#f9fafb',
+              border: '1px solid #e5e7eb',
+              borderRadius: '6px',
+              padding: '20px',
+              marginBottom: '16px'
+            }}>
+              <div style={{ 
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '16px',
+                marginBottom: '16px'
+              }}>
+                {/* Model Selection */}
+                <div>
+                  <label style={{
+                    display: 'block',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    color: '#374151',
+                    marginBottom: '8px'
+                  }}>
+                    AI Model
+                  </label>
+                  <select
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      fontSize: '14px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      backgroundColor: '#ffffff',
+                      color: '#374151'
+                    }}
+                  >
+                    <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                    <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
+                    <option value="gpt-4o">GPT-4o</option>
+                    <option value="gpt-4o-mini">GPT-4o Mini</option>
+                  </select>
+                </div>
+
+                {/* Max Posts */}
+                <div>
+                  <label style={{
+                    display: 'block',
+                    fontSize: '14px',
+                    fontWeight: '500',
+                    color: '#374151',
+                    marginBottom: '8px'
+                  }}>
+                    Max Posts
+                  </label>
+                  <select
+                    value={maxPosts}
+                    onChange={(e) => setMaxPosts(parseInt(e.target.value))}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      fontSize: '14px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      backgroundColor: '#ffffff',
+                      color: '#374151'
+                    }}
+                  >
+                    <option value={5}>5 posts</option>
+                    <option value={10}>10 posts</option>
+                    <option value={15}>15 posts</option>
+                    <option value={20}>20 posts</option>
+                    <option value={30}>30 posts</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Web Search Toggle */}
+              <div>
+                <label style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  color: '#374151',
+                  cursor: 'pointer'
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={useWebSearch}
+                    onChange={(e) => setUseWebSearch(e.target.checked)}
+                    style={{
+                      marginRight: '8px',
+                      width: '16px',
+                      height: '16px'
+                    }}
+                  />
+                  Enable web search for additional context
+                </label>
+              </div>
+            </div>
+          )}
           
           <button
             onClick={handleSearch}
             disabled={isLoading || !searchQuery.trim()}
             style={{
-              backgroundColor: isLoading ? '#9ca3af' : '#000000',
+              backgroundColor: isLoading ? '#9ca3af' : '#3b82f6',
               color: '#ffffff',
               border: 'none',
               padding: '16px 32px',
               fontSize: '16px',
-              borderRadius: '8px',
+              borderRadius: '6px',
               cursor: isLoading ? 'not-allowed' : 'pointer',
-              fontWeight: 'bold',
-              width: '100%'
+              fontWeight: '600',
+              width: '100%',
+              transition: 'background-color 0.15s ease'
             }}
           >
             {isLoading ? 'Searching...' : 'Search Reddit'}
@@ -140,9 +281,9 @@ function AppContent() {
         {/* Error Display */}
         {error && (
           <div style={{
-            backgroundColor: '#fee2e2',
-            border: '2px solid #ef4444',
-            borderRadius: '8px',
+            backgroundColor: '#fef2f2',
+            border: '1px solid #fca5a5',
+            borderRadius: '6px',
             padding: '16px',
             marginBottom: '24px',
             color: '#dc2626'
@@ -156,11 +297,11 @@ function AppContent() {
           <p style={{ 
             margin: '0 0 24px 0', 
             fontSize: '14px', 
-            color: '#22c55e',
+            color: '#059669',
             padding: '12px',
             backgroundColor: '#f0fdf4',
-            border: '2px solid #22c55e',
-            borderRadius: '8px'
+            border: '1px solid #a7f3d0',
+            borderRadius: '6px'
           }}>
             ✅ Signed in as {user.displayName} - Your searches will be saved!
           </p>
@@ -168,11 +309,11 @@ function AppContent() {
           <p style={{ 
             margin: '0 0 24px 0', 
             fontSize: '14px', 
-            color: '#f59e0b',
+            color: '#d97706',
             padding: '12px',
-            backgroundColor: '#fefbf2',
-            border: '2px solid #f59e0b',
-            borderRadius: '8px'
+            backgroundColor: '#fffbeb',
+            border: '1px solid #fcd34d',
+            borderRadius: '6px'
           }}>
             ⚠️ Sign in to save your search history
           </p>
@@ -182,16 +323,16 @@ function AppContent() {
         {searchResults && (
           <div style={{
             backgroundColor: '#f8fafc',
-            border: '2px solid #64748b',
-            borderRadius: '8px',
+            border: '1px solid #cbd5e1',
+            borderRadius: '6px',
             padding: '24px',
             marginTop: '24px'
           }}>
             <h2 style={{
               margin: '0 0 16px 0',
               fontSize: '20px',
-              fontWeight: 'bold',
-              color: '#000000'
+              fontWeight: '600',
+              color: '#111827'
             }}>
               Search Results
             </h2>
