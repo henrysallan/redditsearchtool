@@ -15,6 +15,7 @@ import re
 from datetime import datetime, timezone
 from collections import Counter
 import statistics
+from urllib.parse import quote
 
 # Load environment variables
 load_dotenv()
@@ -246,44 +247,58 @@ def handle_traditional_search_mode(query: str, max_posts: int, model: str):
         # Try multiple Reddit search strategies
         reddit_urls = []
         
-        # Strategy 1: Direct Reddit search in popular subreddits
-        try:
-            search_subreddits = ["all", "AskReddit", "technology", "BuyItForLife", "reviews"]
-            for sub_name in search_subreddits:
-                try:
-                    subreddit = reddit.subreddit(sub_name)
-                    submissions = list(subreddit.search(query, sort="relevance", limit=max_posts))
-                    if submissions:
-                        reddit_urls.extend([f"https://reddit.com{sub.permalink}" for sub in submissions])
-                        break  # Found results, stop searching other subreddits
-                except Exception as sub_error:
-                    logger.warning(json.dumps({
-                        "event": "subreddit_search_error",
-                        "id": getattr(request, "_req_id", "n/a"),
-                        "subreddit": sub_name,
-                        "error": str(sub_error)
-                    }))
-                    continue
-                    
-            logger.info(json.dumps({
-                "event": "reddit_direct_search",
-                "id": getattr(request, "_req_id", "n/a"),
-                "found_count": len(reddit_urls)
-            }))
-        except Exception as e:
-            logger.error(json.dumps({
-                "event": "reddit_search_error",
-                "id": getattr(request, "_req_id", "n/a"),
-                "error": str(e)
-            }))
-
-        # Fallback to Google search if direct Reddit search fails
+        # Primary strategy: Google search for Reddit posts (this was the working method)
+        reddit_urls = search_google_for_reddit_posts(query, num_results=max_posts * 2)
+        
+        # Fallback: Direct Reddit search only if Google fails
+        submissions = []
         if not reddit_urls:
             logger.info(json.dumps({
-                "event": "fallback_google_search",
+                "event": "fallback_reddit_search",
                 "id": getattr(request, "_req_id", "n/a")
             }))
-            reddit_urls = search_google_for_reddit_posts(query, num_results=max_posts * 2)
+            try:
+                # Try specific subreddits based on common search patterns
+                search_subreddits = ["BuyItForLife", "reviews", "gadgets", "technology", "AskReddit"]
+                
+                for sub_name in search_subreddits:
+                    try:
+                        subreddit = reddit.subreddit(sub_name)
+                        results = list(subreddit.search(query, sort="relevance", limit=3, time_filter="all"))
+                        if results:
+                            submissions.extend(results)
+                            logger.info(json.dumps({
+                                "event": "subreddit_search_success",
+                                "id": getattr(request, "_req_id", "n/a"),
+                                "subreddit": sub_name,
+                                "found_count": len(results)
+                            }))
+                            if len(submissions) >= max_posts:
+                                break
+                    except Exception as sub_error:
+                        logger.warning(json.dumps({
+                            "event": "subreddit_search_error",
+                            "id": getattr(request, "_req_id", "n/a"),
+                            "subreddit": sub_name,
+                            "error": str(sub_error)
+                        }))
+                        continue
+                        
+                # If we found submissions directly, convert to URLs for consistency
+                if submissions:
+                    reddit_urls = [f"https://reddit.com{sub.permalink}" for sub in submissions[:max_posts]]
+                    
+                logger.info(json.dumps({
+                    "event": "reddit_direct_search",
+                    "id": getattr(request, "_req_id", "n/a"),
+                    "found_count": len(submissions)
+                }))
+            except Exception as e:
+                logger.error(json.dumps({
+                    "event": "reddit_search_error",
+                    "id": getattr(request, "_req_id", "n/a"),
+                    "error": str(e)
+                }))
 
         if not reddit_urls:
             logger.warning(json.dumps({
@@ -293,31 +308,36 @@ def handle_traditional_search_mode(query: str, max_posts: int, model: str):
             }))
             return jsonify({'error': 'No Reddit posts found for the given query.'}), 404
 
-        # Get Reddit post objects from URLs
-        submissions = []
-        for url in reddit_urls:
-            post = get_reddit_post_from_url(reddit, url)
-            if post:
-                submissions.append(post)
-            if len(submissions) >= max_posts:
-                break
+        # Get Reddit post objects from URLs or use direct submissions
+        if submissions:
+            # We already have submission objects from direct search
+            final_submissions = submissions[:max_posts]
+        else:
+            # Fall back to URL processing if we got URLs from Google search
+            final_submissions = []
+            for url in reddit_urls:
+                post = get_reddit_post_from_url(reddit, url)
+                if post:
+                    final_submissions.append(post)
+                if len(final_submissions) >= max_posts:
+                    break
 
-        if not submissions:
-            return jsonify({'error': 'Could not retrieve Reddit posts from found URLs.'}), 404
+        if not final_submissions:
+            return jsonify({'error': 'Could not retrieve Reddit posts from search results.'}), 404
 
         logger.info(json.dumps({
             "event": "posts_retrieved",
             "id": getattr(request, "_req_id", "n/a"),
-            "post_count": len(submissions)
+            "post_count": len(final_submissions)
         }))
 
         # Perform data analysis
-        analysis = analyze_reddit_data(submissions, query)
+        analysis = analyze_reddit_data(final_submissions, query)
 
         # Extract text from posts and comments  
         full_text = ""
         sources = []
-        for submission in submissions:
+        for submission in final_submissions:
             sources.append({
                 'title': submission.title,
                 'url': submission.url,
@@ -404,7 +424,7 @@ Based on this analysis and the content below, provide:
         logger.info(json.dumps({
             "event": "search_completed",
             "id": getattr(request, "_req_id", "n/a"),
-            "post_count": len(submissions),
+            "post_count": len(final_submissions),
             "sources_count": len(sources)
         }))
 
@@ -456,6 +476,8 @@ def health_check():
                 'REDDIT_CLIENT_ID': bool(os.environ.get('REDDIT_CLIENT_ID')),
                 'REDDIT_CLIENT_SECRET': bool(os.environ.get('REDDIT_CLIENT_SECRET')),
                 'REDDIT_USER_AGENT': bool(os.environ.get('REDDIT_USER_AGENT')),
+                'GOOGLE_SEARCH_API_KEY': bool(os.environ.get('GOOGLE_SEARCH_API_KEY')),
+                'GOOGLE_SEARCH_ENGINE_ID': bool(os.environ.get('GOOGLE_SEARCH_ENGINE_ID')),
             },
             'reddit_api_status': reddit_status
         })
@@ -466,50 +488,124 @@ def health_check():
             'timestamp': int(time.time())
         }), 500
 
-def search_google_for_reddit_posts(query, num_results=5):
-    """Search Google for Reddit posts related to the query"""
+# Debug endpoint for Google search
+@app.route('/api/debug-search', methods=['POST'])
+@app.route('/debug-search', methods=['POST'])
+def debug_search():
+    """Debug endpoint to test Google search"""
     try:
-        import requests
-        from urllib.parse import quote
+        data = request.get_json(silent=True) or {}
+        query = data.get('query', 'test')
         
-        search_query = f"site:reddit.com {query}"
-        encoded_query = quote(search_query)
-        
-        # Using Google Custom Search API or basic search
-        # For Firebase Functions, we'll use a simple approach
-        url = f"https://www.google.com/search?q={encoded_query}&num={num_results}"
-        
+        # Test Google search
+        google_query = f"{query} site:reddit.com"
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
         
-        response = requests.get(url, headers=headers, timeout=10)
+        search_url = f"https://www.google.com/search?q={quote(google_query)}&num=3"
         
-        # Basic URL extraction (simplified for Firebase Functions)
-        import re
-        reddit_urls = re.findall(r'https://(?:www\.)?reddit\.com/r/[^/]+/comments/[^/]+/[^"\s]*', response.text)
+        response = requests.get(search_url, headers=headers, timeout=15)
         
-        # Clean and deduplicate URLs
-        clean_urls = []
-        seen = set()
-        for url in reddit_urls:
-            if url not in seen and len(clean_urls) < num_results:
-                clean_urls.append(url)
-                seen.add(url)
+        # Extract some sample patterns
+        patterns = [
+            r'https://(?:www\.)?reddit\.com/r/[^/]+/comments/[^/\s"\'<>&]+',
+            r'reddit\.com/r/[^/]+/comments/[^/\s"\'<>&]+',
+        ]
         
-        logger.info(json.dumps({
-            "event": "google_search_results",
-            "id": getattr(request, "_req_id", "n/a"),
-            "found_count": len(clean_urls)
-        }))
+        results = {}
+        for i, pattern in enumerate(patterns):
+            matches = re.findall(pattern, response.text)
+            results[f'pattern_{i+1}'] = matches[:5]  # First 5 matches
         
-        return clean_urls
+        return jsonify({
+            'google_query': google_query,
+            'search_url': search_url,
+            'status_code': response.status_code,
+            'content_length': len(response.text),
+            'content_sample': response.text[:500],  # First 500 chars
+            'pattern_results': results
+        })
         
     except Exception as e:
-        logger.error(json.dumps({
-            "event": "google_search_error", 
+        return jsonify({
+            'error': str(e),
+            'trace': traceback.format_exc()
+        }), 500
+
+def search_google_for_reddit_posts(query, num_results=5):
+    """Search Google Custom Search API for Reddit posts related to the query"""
+    try:
+        # Check if Google Search API credentials are available
+        api_key = os.environ.get("GOOGLE_SEARCH_API_KEY")
+        search_engine_id = os.environ.get("GOOGLE_SEARCH_ENGINE_ID")
+        
+        if not api_key or not search_engine_id:
+            logger.warning(json.dumps({
+                "event": "google_api_not_configured",
+                "id": getattr(request, "_req_id", "n/a"),
+                "api_key_present": bool(api_key),
+                "engine_id_present": bool(search_engine_id)
+            }))
+            return []
+        
+        # Use Google Custom Search API
+        search_query = f"{query} site:reddit.com"
+        
+        api_url = "https://www.googleapis.com/customsearch/v1"
+        params = {
+            'key': api_key,
+            'cx': search_engine_id,
+            'q': search_query,
+            'num': min(num_results, 10),  # API max is 10
+            'fields': 'items(title,link)'  # Only get what we need
+        }
+        
+        logger.info(json.dumps({
+            "event": "google_api_request",
             "id": getattr(request, "_req_id", "n/a"),
-            "error": str(e)
+            "query": search_query,
+            "num_results": params['num']
+        }))
+        
+        response = requests.get(api_url, params=params, timeout=15)
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        # Extract Reddit URLs from API results
+        reddit_urls = []
+        if 'items' in data:
+            for item in data['items']:
+                url = item.get('link', '')
+                # Verify it's a Reddit post URL
+                if re.match(r'https://(?:www\.)?reddit\.com/r/[^/]+/comments/', url):
+                    reddit_urls.append(url)
+        
+        logger.info(json.dumps({
+            "event": "google_api_results",
+            "id": getattr(request, "_req_id", "n/a"),
+            "found_count": len(reddit_urls),
+            "total_items": len(data.get('items', [])),
+            "urls": reddit_urls[:3]  # Log first 3 URLs for debugging
+        }))
+        
+        return reddit_urls
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(json.dumps({
+            "event": "google_api_request_error", 
+            "id": getattr(request, "_req_id", "n/a"),
+            "error": str(e),
+            "status_code": getattr(e.response, 'status_code', None) if hasattr(e, 'response') else None
+        }))
+        return []
+    except Exception as e:
+        logger.error(json.dumps({
+            "event": "google_api_error", 
+            "id": getattr(request, "_req_id", "n/a"),
+            "error": str(e),
+            "trace": traceback.format_exc()
         }))
         return []
 
@@ -612,7 +708,9 @@ def analyze_reddit_data(submissions, query):
         "ANTHROPIC_API_KEY",
         "REDDIT_CLIENT_ID", 
         "REDDIT_CLIENT_SECRET",
-        "REDDIT_USER_AGENT"
+        "REDDIT_USER_AGENT",
+        "GOOGLE_SEARCH_API_KEY",
+        "GOOGLE_SEARCH_ENGINE_ID"
     ]
 )
 def api(req: https_fn.Request) -> https_fn.Response:
