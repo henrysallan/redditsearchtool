@@ -7,7 +7,9 @@
       "ANTHROPIC_API_KEY",
       "REDDIT_CLIENT_ID", 
       "REDDIT_CLIENT_SECRET",
-      "REDDIT_USER_AGENT"
+      "REDDIT_USER_AGENT",
+      "GOOGLE_SEARCH_API_KEY",
+      "GOOGLE_SEARCH_ENGINE_ID"
     ],
     "ignore": [
       "node_modules",

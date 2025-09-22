@@ -104,10 +104,23 @@ def estimate_cost():
         
         total_cost = agent_input_cost + agent_output_cost + coordinator_input_cost + coordinator_output_cost
         
+        # Total tokens
+        total_input_tokens = agent_input_tokens + coordinator_input_tokens
+        total_output_tokens = agent_output_tokens + coordinator_output_tokens
+        
         return jsonify({
-            'estimated_cost': round(total_cost, 4),
-            'breakdown': {
-                'agents_cost': round(agent_input_cost + agent_output_cost, 4),
+            'search_mode': 'multi_agent_web_search',
+            'estimated_tokens': {
+                'agent_input': agent_input_tokens,
+                'agent_output': agent_output_tokens,
+                'coordinator_input': coordinator_input_tokens,
+                'coordinator_output': coordinator_output_tokens,
+                'total_input': total_input_tokens,
+                'total_output': total_output_tokens,
+                'total': total_input_tokens + total_output_tokens
+            },
+            'costs': {
+                'agent_cost': round(agent_input_cost + agent_output_cost, 4),
                 'coordinator_cost': round(coordinator_input_cost + coordinator_output_cost, 4),
                 'total': round(total_cost, 4)
             },
@@ -127,16 +140,25 @@ def estimate_cost():
         output_cost = (estimated_output_tokens / 1_000_000) * pricing['output']
         total_cost = input_cost + output_cost
         
+        # Reddit API is free for reasonable usage
+        reddit_cost = 0.0
+        
         return jsonify({
-            'estimated_cost': round(total_cost, 4),
-            'breakdown': {
-                'input_tokens': estimated_input_tokens,
-                'output_tokens': estimated_output_tokens,
-                'input_cost': round(input_cost, 4),
-                'output_cost': round(output_cost, 4),
-                'total': round(total_cost, 4)
+            'search_mode': 'traditional_reddit_search',
+            'estimated_tokens': {
+                'input': estimated_input_tokens,
+                'output': estimated_output_tokens,
+                'total': estimated_input_tokens + estimated_output_tokens
             },
-            'model': model
+            'costs': {
+                'reddit_api': reddit_cost,
+                'claude_input': round(input_cost, 4),
+                'claude_output': round(output_cost, 4),
+                'claude_total': round(input_cost + output_cost, 4),
+                'total': round(total_cost + reddit_cost, 4)
+            },
+            'model': model,
+            'posts': max_posts
         })
 
 @app.route('/api/search-summarize', methods=['POST'])
@@ -308,17 +330,45 @@ def handle_traditional_search_mode(query: str, max_posts: int, model: str):
             }))
             return jsonify({'error': 'No Reddit posts found for the given query.'}), 404
 
+        logger.info(json.dumps({
+            "event": "reddit_urls_found",
+            "id": getattr(request, "_req_id", "n/a"),
+            "urls": reddit_urls,
+            "total_count": len(reddit_urls)
+        }))
+
         # Get Reddit post objects from URLs or use direct submissions
         if submissions:
             # We already have submission objects from direct search
             final_submissions = submissions[:max_posts]
         else:
-            # Fall back to URL processing if we got URLs from Google search
+            # Process URLs from Google search
             final_submissions = []
-            for url in reddit_urls:
+            for i, url in enumerate(reddit_urls):
+                logger.info(json.dumps({
+                    "event": "processing_url",
+                    "id": getattr(request, "_req_id", "n/a"),
+                    "url_index": i + 1,
+                    "url": url
+                }))
+                
                 post = get_reddit_post_from_url(reddit, url)
                 if post:
                     final_submissions.append(post)
+                    logger.info(json.dumps({
+                        "event": "url_processed_successfully",
+                        "id": getattr(request, "_req_id", "n/a"),
+                        "url_index": i + 1,
+                        "post_title": post.title[:50] + "..." if len(post.title) > 50 else post.title
+                    }))
+                else:
+                    logger.warning(json.dumps({
+                        "event": "url_processing_failed",
+                        "id": getattr(request, "_req_id", "n/a"),
+                        "url_index": i + 1,
+                        "url": url
+                    }))
+                
                 if len(final_submissions) >= max_posts:
                     break
 
@@ -457,11 +507,22 @@ def health_check():
                 client_id=os.environ.get("REDDIT_CLIENT_ID"),
                 client_secret=os.environ.get("REDDIT_CLIENT_SECRET"),
                 user_agent=os.environ.get("REDDIT_USER_AGENT"),
+                # For server applications, we don't need username/password
+                # This will use client credentials flow
             )
-            # Try to access Reddit API
+            
+            # Test basic subreddit access first
             subreddit = reddit.subreddit("test")
             _ = subreddit.display_name  # This will trigger API call
-            reddit_status = "connected"
+            
+            # Test if we can read a post (this requires different permissions)
+            try:
+                test_post = reddit.submission(id='vg2jen')
+                _ = test_post.title
+                reddit_status = "connected (full access)"
+            except Exception as post_error:
+                reddit_status = f"connected (subreddit only) - post error: {str(post_error)}"
+                
         except Exception as e:
             reddit_status = f"error: {str(e)}"
             
@@ -488,6 +549,55 @@ def health_check():
             'timestamp': int(time.time())
         }), 500
 
+# Simple test endpoint
+@app.route('/api/test-json', methods=['GET'])
+@app.route('/test-json', methods=['GET'])
+def test_json():
+    """Test Reddit JSON API directly"""
+    try:
+        url = "https://www.reddit.com/r/functionalprogramming/comments/1hzlszu/which_functional_programming_language_should_i/"
+        
+        # Test URL construction
+        if '/comments/' in url:
+            parts = url.split('/comments/')
+            if len(parts) >= 2:
+                base_part = parts[0]  # https://www.reddit.com/r/subreddit
+                post_part = parts[1].split('/')[0]  # post_id
+                
+                json_url = f"{base_part}/comments/{post_part}.json"
+                
+                # Make request
+                headers = {'User-Agent': 'Mozilla/5.0 (compatible; RedditSearchBot/1.0)'}
+                response = requests.get(json_url, headers=headers, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data and len(data) > 0 and 'data' in data[0]:
+                        post_data = data[0]['data']['children'][0]['data']
+                        return jsonify({
+                            'success': True,
+                            'original_url': url,
+                            'json_url': json_url,
+                            'title': post_data.get('title', '')[:50],
+                            'subreddit': post_data.get('subreddit', ''),
+                            'score': post_data.get('score', 0)
+                        })
+                
+                return jsonify({
+                    'success': False,
+                    'json_url': json_url,
+                    'status_code': response.status_code,
+                    'response_text': response.text[:200]
+                })
+        
+        return jsonify({'error': 'Invalid URL format'})
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
 # Debug endpoint for Google search
 @app.route('/api/debug-search', methods=['POST'])
 @app.route('/debug-search', methods=['POST'])
@@ -497,34 +607,77 @@ def debug_search():
         data = request.get_json(silent=True) or {}
         query = data.get('query', 'test')
         
-        # Test Google search
-        google_query = f"{query} site:reddit.com"
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+        # Test Google Custom Search API
+        reddit_urls = search_google_for_reddit_posts(query, num_results=3)
         
-        search_url = f"https://www.google.com/search?q={quote(google_query)}&num=3"
+        # Test Reddit API connection
+        reddit = praw.Reddit(
+            client_id=os.environ.get("REDDIT_CLIENT_ID"),
+            client_secret=os.environ.get("REDDIT_CLIENT_SECRET"),
+            user_agent=os.environ.get("REDDIT_USER_AGENT"),
+        )
         
-        response = requests.get(search_url, headers=headers, timeout=15)
+        # Test basic Reddit API access
+        try:
+            test_post = reddit.submission(id='vg2jen')  # Known post ID from above
+            test_title = test_post.title
+            reddit_test_result = {
+                'success': True,
+                'test_post_title': test_title[:50],
+                'test_post_score': test_post.score
+            }
+        except Exception as e:
+            reddit_test_result = {
+                'success': False,
+                'error': str(e),
+                'error_type': type(e).__name__
+            }
         
-        # Extract some sample patterns
-        patterns = [
-            r'https://(?:www\.)?reddit\.com/r/[^/]+/comments/[^/\s"\'<>&]+',
-            r'reddit\.com/r/[^/]+/comments/[^/\s"\'<>&]+',
-        ]
-        
-        results = {}
-        for i, pattern in enumerate(patterns):
-            matches = re.findall(pattern, response.text)
-            results[f'pattern_{i+1}'] = matches[:5]  # First 5 matches
+        # Test URL processing with detailed logging
+        url_processing_results = []
+        for url in reddit_urls:
+            print(f"DEBUG: Processing URL: {url}")
+            
+            # Use the updated get_reddit_post_from_url function
+            try:
+                post = get_reddit_post_from_url(reddit, url)
+                if post:
+                    url_processing_results.append({
+                        'url': url,
+                        'success': True,
+                        'title': post.title[:50],
+                        'subreddit': str(post.subreddit) if hasattr(post, 'subreddit') else getattr(post, 'subreddit', 'unknown'),
+                        'score': post.score,
+                        'method': 'json_api' if hasattr(post, 'id') and not hasattr(post, 'author') else 'praw'
+                    })
+                else:
+                    url_processing_results.append({
+                        'url': url,
+                        'success': False,
+                        'error': 'Function returned None'
+                    })
+            except Exception as e:
+                url_processing_results.append({
+                    'url': url,
+                    'success': False,
+                    'error': str(e),
+                    'error_type': type(e).__name__,
+                    'traceback': traceback.format_exc()
+                })
         
         return jsonify({
-            'google_query': google_query,
-            'search_url': search_url,
-            'status_code': response.status_code,
-            'content_length': len(response.text),
-            'content_sample': response.text[:500],  # First 500 chars
-            'pattern_results': results
+            'query': query,
+            'google_search_results': {
+                'found_urls': reddit_urls,
+                'count': len(reddit_urls)
+            },
+            'reddit_api_test': reddit_test_result,
+            'url_processing': url_processing_results,
+            'api_credentials': {
+                'google_api_key_present': bool(os.environ.get('GOOGLE_SEARCH_API_KEY')),
+                'google_engine_id_present': bool(os.environ.get('GOOGLE_SEARCH_ENGINE_ID')),
+                'reddit_credentials_present': bool(os.environ.get('REDDIT_CLIENT_ID'))
+            }
         })
         
     except Exception as e:
@@ -609,22 +762,171 @@ def search_google_for_reddit_posts(query, num_results=5):
         }))
         return []
 
-def get_reddit_post_from_url(reddit, url):
-    """Get Reddit post object from URL"""
+def get_reddit_post_from_url_json(url):
+    """Get Reddit post data using Reddit JSON API (no auth required)"""
     try:
+        logger.info(json.dumps({
+            "event": "processing_reddit_url_json",
+            "id": getattr(request, "_req_id", "n/a"),
+            "url": url
+        }))
+        
+        # Convert reddit.com URL to JSON API URL
+        # https://www.reddit.com/r/subreddit/comments/post_id/title/ -> 
+        # https://www.reddit.com/r/subreddit/comments/post_id.json
+        
+        if '/comments/' in url:
+            # Extract the parts we need
+            parts = url.split('/comments/')
+            if len(parts) >= 2:
+                base_part = parts[0]  # https://www.reddit.com/r/subreddit
+                post_part = parts[1].split('/')[0]  # post_id
+                
+                json_url = f"{base_part}/comments/{post_part}.json"
+                
+                logger.info(json.dumps({
+                    "event": "reddit_json_url_constructed",
+                    "id": getattr(request, "_req_id", "n/a"),
+                    "original_url": url,
+                    "json_url": json_url
+                }))
+                
+                # Make request to Reddit JSON API
+                headers = {
+                    'User-Agent': 'RedditSearchTool/1.0 (by /u/YourUsername)'
+                }
+                
+                logger.info(json.dumps({
+                    "event": "making_reddit_json_request",
+                    "id": getattr(request, "_req_id", "n/a"),
+                    "json_url": json_url
+                }))
+                
+                response = requests.get(json_url, headers=headers, timeout=10)
+                
+                logger.info(json.dumps({
+                    "event": "reddit_json_response",
+                    "id": getattr(request, "_req_id", "n/a"),
+                    "status_code": response.status_code,
+                    "content_length": len(response.text)
+                }))
+                
+                response.raise_for_status()
+                
+                data = response.json()
+                
+                logger.info(json.dumps({
+                    "event": "reddit_json_parsed",
+                    "id": getattr(request, "_req_id", "n/a"),
+                    "data_type": type(data).__name__,
+                    "data_length": len(data) if isinstance(data, list) else "not_list"
+                }))
+                
+                # Reddit JSON API returns [listing, comments]
+                # We want the post data from the first listing
+                if data and len(data) > 0 and 'data' in data[0]:
+                    post_data = data[0]['data']['children'][0]['data']
+                    
+                    logger.info(json.dumps({
+                        "event": "reddit_post_retrieved_json",
+                        "id": getattr(request, "_req_id", "n/a"),
+                        "title": post_data.get('title', '')[:50],
+                        "subreddit": post_data.get('subreddit', ''),
+                        "score": post_data.get('score', 0)
+                    }))
+                    
+                    # Return a simplified object that matches what we expect
+                    class SimplePost:
+                        def __init__(self, data):
+                            self.title = data.get('title', '')
+                            self.selftext = data.get('selftext', '')
+                            self.subreddit = data.get('subreddit', '')
+                            self.score = data.get('score', 0)
+                            self.num_comments = data.get('num_comments', 0)
+                            self.created_utc = data.get('created_utc', 0)
+                            self.author = data.get('author', '[deleted]')
+                            self.url = data.get('url', '')
+                    
+                    return SimplePost(post_data)
+        
+        logger.warning(json.dumps({
+            "event": "reddit_json_parse_failed",
+            "id": getattr(request, "_req_id", "n/a"),
+            "url": url,
+            "reason": "Could not parse URL or extract post data"
+        }))
+        return None
+        
+    except Exception as e:
+        logger.error(json.dumps({
+            "event": "reddit_json_error",
+            "id": getattr(request, "_req_id", "n/a"),
+            "url": url,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }))
+        return None
+
+def get_reddit_post_from_url(reddit, url):
+    """Get Reddit post object from URL with fallback to JSON API"""
+    try:
+        logger.info(json.dumps({
+            "event": "processing_reddit_url",
+            "id": getattr(request, "_req_id", "n/a"),
+            "url": url
+        }))
+        
+        # First try the JSON API approach (no auth required)
+        post = get_reddit_post_from_url_json(url)
+        if post:
+            return post
+        
+        # Fallback to PRAW approach (requires auth)
         # Extract post ID from URL  
         url_parts = url.split('/')
+        
+        logger.info(json.dumps({
+            "event": "url_parts_analysis",
+            "id": getattr(request, "_req_id", "n/a"),
+            "url_parts": url_parts,
+            "url_parts_count": len(url_parts)
+        }))
         
         if 'comments' in url_parts:
             post_id_index = url_parts.index('comments') + 1
             if post_id_index < len(url_parts):
                 post_id = url_parts[post_id_index]
                 
+                logger.info(json.dumps({
+                    "event": "extracted_post_id",
+                    "id": getattr(request, "_req_id", "n/a"),
+                    "post_id": post_id,
+                    "url": url
+                }))
+                
+                # Get submission from Reddit API
                 submission = reddit.submission(id=post_id)
-                # Access a property to ensure the post exists
-                _ = submission.title
+                
+                # Access a property to ensure the post exists and trigger API call
+                title = submission.title
+                
+                logger.info(json.dumps({
+                    "event": "reddit_post_retrieved",
+                    "id": getattr(request, "_req_id", "n/a"),
+                    "post_id": post_id,
+                    "title": title[:50] + "..." if len(title) > 50 else title,
+                    "subreddit": str(submission.subreddit),
+                    "score": submission.score
+                }))
+                
                 return submission
         
+        logger.warning(json.dumps({
+            "event": "post_id_extraction_failed",
+            "id": getattr(request, "_req_id", "n/a"),
+            "url": url,
+            "reason": "comments not found in URL or no post_id after comments"
+        }))
         return None
         
     except Exception as e:
@@ -632,7 +934,9 @@ def get_reddit_post_from_url(reddit, url):
             "event": "reddit_post_error",
             "id": getattr(request, "_req_id", "n/a"),
             "url": url,
-            "error": str(e)
+            "error": str(e),
+            "error_type": type(e).__name__,
+            "trace": traceback.format_exc()
         }))
         return None
 

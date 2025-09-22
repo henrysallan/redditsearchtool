@@ -609,12 +609,12 @@ export default function App() {
                           Estimated Cost
                         </div>
                         <div style={{ fontSize: '1.2rem', fontWeight: '600', color: '#667eea' }}>
-                          ${costEstimate.costs.total.toFixed(4)}
+                          ${costEstimate?.costs?.total?.toFixed(4) || '0.0000'}
                         </div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '0.8rem', color: '#c0c0c0' }}>
-                          ~{costEstimate.estimated_tokens.total.toLocaleString()} tokens
+                          ~{costEstimate?.estimated_tokens?.total?.toLocaleString() || '0'} tokens
                         </div>
                         {useWebSearch ? (
                           <div style={{ fontSize: '0.8rem', color: '#22c55e' }}>
