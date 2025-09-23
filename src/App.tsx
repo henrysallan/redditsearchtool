@@ -52,6 +52,10 @@ function AppContent() {
   const [userTier, setUserTier] = useState<UserTier>('anonymous');
   const [availableModels, setAvailableModels] = useState(getAvailableModels('anonymous'));
 
+  // Pro mode features
+  const [analysisVerbosity, setAnalysisVerbosity] = useState(50); // 0-100 scale
+  const [customPrompt, setCustomPrompt] = useState('');
+
   // Update user tier and available models when user changes
   useEffect(() => {
     const updateUserTier = async () => {
@@ -304,6 +308,36 @@ function AppContent() {
     }
   };
 
+  // Function to clean up auto-generated titles from summary
+  const cleanSummaryText = (text: string): string => {
+    // Remove common auto-generated titles that appear at the start
+    const titlePatterns = [
+      /^# Reddit Data Analysis.*?(\n\n|\n)/i,
+      /^# Analysis of.*?(\n\n|\n)/i,
+      /^# Summary of.*?(\n\n|\n)/i,
+      /^# Reddit Discussion.*?(\n\n|\n)/i,
+      /^# .*?Analysis.*?(\n\n|\n)/i,
+      /^## Reddit Data Analysis.*?(\n\n|\n)/i,
+      /^## Analysis of.*?(\n\n|\n)/i,
+      /^## Summary of.*?(\n\n|\n)/i,
+      /^## Reddit Discussion.*?(\n\n|\n)/i,
+      /^## .*?Analysis.*?(\n\n|\n)/i,
+      // Also remove any line that starts with "Reddit Data Analysis" even without #
+      /^Reddit Data Analysis.*?(\n\n|\n)/i,
+      /^Analysis of.*?(\n\n|\n)/i,
+      /^Summary of.*?(\n\n|\n)/i,
+      /^Reddit Discussion.*?(\n\n|\n)/i,
+    ];
+    
+    let cleanedText = text;
+    titlePatterns.forEach(pattern => {
+      cleanedText = cleanedText.replace(pattern, '');
+    });
+    
+    // Also remove any leading whitespace after cleaning
+    return cleanedText.trim();
+  };
+
   // Enhanced text processing function for intelligent hyperlinking
   const enhanceTextWithLinks = (text: string): string => {
     if (!enhancedLinks || Object.keys(enhancedLinks).length === 0) {
@@ -517,7 +551,7 @@ function AppContent() {
 
         {/* Error */}
         {error && (
-          <section className="max-w-2xl mx-auto mt-8 bg-white p-6" style={{ border: '3px solid #000000' }}>
+          <section className="max-w-2xl mx-auto mt-8 bg-white p-3" style={{ border: '3px solid #000000' }}>
             <h3 className="text-lg font-semibold text-black mb-2">Error</h3>
             <p className="text-black mb-4">{error}</p>
             <button 
@@ -532,10 +566,10 @@ function AppContent() {
 
         {/* Results - 2 Column Layout */}
         {searchResults && (
-          <section className="w-full px-6 mt-8">
+          <section className="w-full">
             {/* Header with New Search Button */}
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-black">{searchQuery}</h2>
+            <div className="flex items-start justify-between mb-3">
+              <h2 className="text-3xl font-bold text-black underline">{searchQuery}</h2>
               <button
                 onClick={() => {
                   setSearchResults('');
@@ -543,7 +577,7 @@ function AppContent() {
                   setEnhancedLinks({});
                   setExtractedTerms([]);
                 }}
-                className="px-4 py-2 bg-transparent text-black cursor-pointer hover:bg-black hover:text-white"
+                className="px-4 py-2 bg-transparent text-black cursor-pointer hover:bg-black hover:text-white font-bold"
                 style={{ border: '3px solid #000000' }}
               >
                 New Search
@@ -553,10 +587,10 @@ function AppContent() {
             {/* Two Column Layout */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Left Column - Summary */}
-              <div className="bg-white p-6" style={{ border: '3px solid #000000' }}>
+              <div className="bg-white p-3" style={{ border: '3px solid #000000' }}>
                 <h3 className="text-xl font-bold text-black mb-4">📝 Summary</h3>
                 <div className="markdown-content max-w-none text-black">
-                  <ReactMarkdown>{enhanceTextWithLinks(searchResults)}</ReactMarkdown>
+                  <ReactMarkdown>{enhanceTextWithLinks(cleanSummaryText(searchResults))}</ReactMarkdown>
                 </div>
               </div>
 
@@ -564,7 +598,7 @@ function AppContent() {
               <div className="space-y-6">
                 {/* Enhanced Links Section */}
                 {enhancedLinks && Object.keys(enhancedLinks).length > 0 && (
-                  <div className="bg-white p-6" style={{ border: '3px solid #000000' }}>
+                  <div className="bg-white p-3" style={{ border: '3px solid #000000' }}>
                     <h3 className="text-xl font-bold mb-4 text-black">🔗 Enhanced Links</h3>
                     <div className="space-y-4">
                       {Object.entries(enhancedLinks).map(([term, links]) => (
@@ -600,7 +634,7 @@ function AppContent() {
 
                 {/* Search Terms Section */}
                 {extractedTerms && extractedTerms.length > 0 && (
-                  <div className="bg-white p-6" style={{ border: '3px solid #000000' }}>
+                  <div className="bg-white p-3" style={{ border: '3px solid #000000' }}>
                     <h3 className="text-xl font-bold mb-4 text-black">📝 Extracted Search Terms</h3>
                     <div className="flex flex-wrap gap-2">
                       {extractedTerms.map((term: string, index: number) => (
@@ -618,7 +652,7 @@ function AppContent() {
 
                 {/* Analytics Dashboard */}
                 {analyticsData && (
-                  <div className="bg-white p-6" style={{ border: '3px solid #000000' }}>
+                  <div className="bg-white p-3" style={{ border: '3px solid #000000' }}>
                     <AnalyticsDashboard data={analyticsData as any} sources={sources} isVisible={!!analyticsData} />
                   </div>
                 )}

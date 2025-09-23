@@ -83,7 +83,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar, sidebarOpen, us
 
   return (
     <header className="sticky top-0 z-50 bg-white" style={{ borderBottom: '3px solid #000000' }}>
-      <div className="w-full px-6 py-3 flex items-center justify-between">
+      <div className="w-full px-3 py-3 flex items-center justify-between">
         {/* Left: Title + History */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {user && (
