@@ -100,7 +100,6 @@ export const SearchHistorySidebar: React.FC<SearchHistorySidebarProps> = ({
             cursor: 'pointer',
             fontSize: '1rem',
             fontWeight: '600',
-            borderRadius: '4px',
             transition: 'all 0.2s ease',
           }}
           onMouseEnter={(e) => {
@@ -153,7 +152,6 @@ export const SearchHistorySidebar: React.FC<SearchHistorySidebarProps> = ({
                 onClick={() => onSelectSearch(search)}
                 style={{
                   border: '2px solid #e0e0e0',
-                  borderRadius: '8px',
                   padding: '16px',
                   cursor: 'pointer',
                   transition: 'all 0.2s ease',
@@ -203,7 +201,6 @@ export const SearchHistorySidebar: React.FC<SearchHistorySidebarProps> = ({
                   <span style={{
                     padding: '2px 6px',
                     border: '1px solid #d0d0d0',
-                    borderRadius: '4px',
                     backgroundColor: '#f5f5f5',
                   }}>
                     {search.useWebSearch ? 'Web Search' : 'Reddit Only'}
@@ -211,7 +208,6 @@ export const SearchHistorySidebar: React.FC<SearchHistorySidebarProps> = ({
                   <span style={{
                     padding: '2px 6px',
                     border: '1px solid #d0d0d0',
-                    borderRadius: '4px',
                     backgroundColor: '#f5f5f5',
                   }}>
                     {search.maxPosts} posts
@@ -220,7 +216,6 @@ export const SearchHistorySidebar: React.FC<SearchHistorySidebarProps> = ({
                     <span style={{
                       padding: '2px 6px',
                       border: '1px solid #d0d0d0',
-                      borderRadius: '4px',
                       backgroundColor: '#f5f5f5',
                     }}>
                       ${search.estimatedCost.toFixed(4)}

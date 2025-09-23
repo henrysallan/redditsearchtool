@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+/* Custom Design System: Pure black/white, thick borders, no fills */
+* {
+  border-radius: 0 !important;
+}
+
+/* Remove default button and input styling */
+button, input, select {
+  border-radius: 0 !important;
+  outline: none !important;
+}
+
+/* Ensure no focus rings or shadows */
+button:focus, input:focus, select:focus {
+  outline: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+/* Better button hover states */
+button:hover {
+  transition: all 0.2s ease;
+}
+
+/* Ensure proper spacing for main content */
+main {
+  min-height: calc(100vh - 80px);
+  padding: 20px;
+}
+
+/* Loading spinner animation */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Markdown content styling */
+.markdown-content h1 {
+  font-size: 2rem;
+  font-weight: bold;
+  margin: 1.5rem 0 1rem 0;
+  color: black;
+}
+
+.markdown-content h2 {
+  font-size: 1.75rem;
+  font-weight: bold;
+  margin: 1.25rem 0 0.75rem 0;
+  color: black;
+}
+
+.markdown-content h3 {
+  font-size: 1.5rem;
+  font-weight: bold;
+  margin: 1rem 0 0.5rem 0;
+  color: black;
+}
+
+.markdown-content p {
+  margin: 1rem 0;
+  line-height: 1.6;
+  color: black;
+}
+
+.markdown-content ul {
+  margin: 1rem 0;
+  padding-left: 2rem;
+}
+
+.markdown-content li {
+  margin: 0.5rem 0;
+  line-height: 1.6;
+  color: black;
+  list-style-type: disc;
+}
+
+.markdown-content ol {
+  margin: 1rem 0;
+  padding-left: 2rem;
+}
+
+.markdown-content ol li {
+  list-style-type: decimal;
+}
+
+.markdown-content strong {
+  font-weight: bold;
+  color: black;
+}
+
+.markdown-content em {
+  font-style: italic;
+  color: black;
+}
+
+.markdown-content a {
+  color: black;
+  text-decoration: underline;
+  font-weight: bold;
+}
+
+.markdown-content a:hover {
+  background-color: black;
+  color: white;
+}
+
+/* Custom scrollbar for consistency */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: white;
+  border: 1px solid black;
+}
+
+::-webkit-scrollbar-thumb {
+  background: black;
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #333;
+}

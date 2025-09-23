@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 import praw
 import anthropic
+import google.generativeai as genai
 import os
 import time
 import random
@@ -15,6 +16,9 @@ import statistics
 from playwright.async_api import async_playwright
 
 load_dotenv()
+
+# Configure Gemini API
+genai.configure(api_key=os.getenv("GOOGLE_AI_API_KEY"))
 
 app = Flask(__name__)
 
@@ -35,6 +39,12 @@ def estimate_cost():
         'claude-3-5-haiku-20241022': {'input': 0.25, 'output': 1.25},      # Haiku
         'claude-3-5-sonnet-20241022': {'input': 3.00, 'output': 15.00},    # Sonnet
         'claude-3-opus-20240229': {'input': 15.00, 'output': 75.00}        # Opus
+    }
+    
+    # Gemini pricing (as of 2024) - per million tokens
+    gemini_pricing = {
+        'gemini-1.5-flash': {'input': 0.075, 'output': 0.30},             # Flash (free tier available)
+        'gemini-1.5-pro': {'input': 3.50, 'output': 10.50}               # Pro
     }
     
     if use_web_search:
@@ -93,8 +103,13 @@ def estimate_cost():
         estimated_input_tokens = max_posts * (300 + 5 * 50) + 500  # +500 for prompt overhead
         estimated_output_tokens = 400  # Typical summary length
         
-        # Calculate costs
-        pricing = claude_pricing.get(model, claude_pricing['claude-3-5-sonnet-20241022'])
+        # Determine pricing based on model
+        if model.startswith('gemini-'):
+            pricing = gemini_pricing.get(model, gemini_pricing['gemini-1.5-flash'])
+            ai_provider = 'gemini'
+        else:
+            pricing = claude_pricing.get(model, claude_pricing['claude-3-5-sonnet-20241022'])
+            ai_provider = 'claude'
         
         input_cost = (estimated_input_tokens / 1_000_000) * pricing['input']
         output_cost = (estimated_output_tokens / 1_000_000) * pricing['output']
@@ -102,6 +117,13 @@ def estimate_cost():
         
         # Reddit API is free for reasonable usage
         reddit_cost = 0.0
+        
+        # Handle free tier for Gemini
+        if model == 'gemini-1.5-flash':
+            # Check if within free tier limits (simplified check)
+            total_cost = 0.0  # Assume free tier for cost estimation
+            input_cost = 0.0
+            output_cost = 0.0
         
         return jsonify({
             'search_mode': 'traditional_reddit_search',
@@ -112,16 +134,76 @@ def estimate_cost():
             },
             'costs': {
                 'reddit_api': reddit_cost,
-                'claude_input': round(input_cost, 4),
-                'claude_output': round(output_cost, 4),
-                'claude_total': round(input_cost + output_cost, 4),
+                f'{ai_provider}_input': round(input_cost, 4),
+                f'{ai_provider}_output': round(output_cost, 4),
+                f'{ai_provider}_total': round(input_cost + output_cost, 4),
                 'total': round(total_cost + reddit_cost, 4)
             },
             'model': model,
+            'ai_provider': ai_provider,
             'posts': max_posts
         })
 
+def call_ai_model(model: str, prompt: str, max_tokens: int = 1500):
+    """
+    Universal function to call either Claude or Gemini based on model name
+    """
+    if model.startswith('gemini-'):
+        # Use Gemini API
+        try:
+            gemini_model = genai.GenerativeModel(model)
+            response = gemini_model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=0.7,
+                )
+            )
+            return response.text
+        except Exception as e:
+            raise Exception(f"Gemini API error: {str(e)}")
+    else:
+        # Use Claude API
+        try:
+            client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+            message = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return message.content[0].text
+        except Exception as e:
+            raise Exception(f"Claude API error: {str(e)}")
+
 # Multi-Agent Web Search System
+
+# User tier and model access control
+def get_user_tier(user_id=None):
+    """Determine user tier - for now all authenticated users are 'free'"""
+    if not user_id:
+        return 'anonymous'
+    # TODO: Add subscription logic here later
+    return 'free'
+
+def get_allowed_models(tier):
+    """Get list of models allowed for each tier"""
+    if tier == 'anonymous' or tier == 'free':
+        return ['gemini-1.5-flash']
+    elif tier == 'paid':
+        return [
+            'gemini-1.5-flash', 
+            'gemini-1.5-pro',
+            'claude-3-5-haiku-20241022',
+            'claude-3-5-sonnet-20241022', 
+            'claude-3-opus-20240229'
+        ]
+    return []
+
+def is_model_allowed(model, tier):
+    """Check if a model is allowed for the given user tier"""
+    return model in get_allowed_models(tier)
 
 def extract_subreddit_from_url(url: str) -> str:
     """Extract subreddit name from Reddit URL"""
@@ -945,6 +1027,199 @@ def get_reddit_post_from_url(reddit, url):
         print(f"❌ Traceback: {traceback.format_exc()}")
         return None
 
+# Enhanced Link Discovery Functions
+
+def extract_link_enhancement_data(ai_response):
+    """Extract structured JSON data from AI response for link enhancement"""
+    try:
+        # Look for JSON block in the response
+        json_pattern = r'```json\s*(\{.*?\})\s*```'
+        match = re.search(json_pattern, ai_response, re.DOTALL)
+        
+        if match:
+            import json
+            json_str = match.group(1)
+            data = json.loads(json_str)
+            print(f"🔗 Extracted link enhancement data: {len(data.get('search_terms', []))} search terms, {len(data.get('reddit_links', []))} Reddit links")
+            return data
+        else:
+            print("⚠️ No JSON block found in AI response for link enhancement")
+            return {"reddit_links": [], "search_terms": []}
+    
+    except Exception as e:
+        print(f"❌ Error extracting link enhancement data: {e}")
+        return {"reddit_links": [], "search_terms": []}
+
+def get_firebase_secret(secret_name):
+    """Get Firebase secret value for local development"""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["firebase", "functions:secrets:access", secret_name],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+        else:
+            print(f"⚠️ Failed to get Firebase secret '{secret_name}': {result.stderr}")
+            return None
+    except Exception as e:
+        print(f"⚠️ Error accessing Firebase secret '{secret_name}': {e}")
+        return None
+
+def search_google_for_product_links(search_term, max_results=3):
+    """Search Google Custom Search API for product links related to a search term"""
+    try:
+        # Get Google Search API credentials from Firebase secrets
+        api_key = get_firebase_secret("GOOGLE_SEARCH_API_KEY")
+        search_engine_id = get_firebase_secret("GOOGLE_SEARCH_ENGINE_ID")
+        
+        if not api_key or not search_engine_id:
+            print(f"⚠️ Google Search API credentials not available from Firebase secrets. API key: {bool(api_key)}, Engine ID: {bool(search_engine_id)}")
+            # Fallback to creating basic links without search
+            return create_fallback_product_links(search_term)
+        
+        # Create a focused product search query
+        product_query = f"{search_term} buy review store price"
+        print(f"🛍️ Searching Google Custom Search API for: '{product_query}'")
+        
+        # Use Google Custom Search API
+        api_url = "https://www.googleapis.com/customsearch/v1"
+        params = {
+            'key': api_key,
+            'cx': search_engine_id,
+            'q': product_query,
+            'num': min(max_results * 2, 10),  # API max is 10, get extra to filter
+            'fields': 'items(title,link,snippet)'  # Get what we need for filtering
+        }
+        
+        response = requests.get(api_url, params=params, timeout=15)
+        response.raise_for_status()
+        
+        data = response.json()
+        found_links = []
+        
+        # Filter for e-commerce and review sites
+        target_domains = {
+            'amazon.com', 'bestbuy.com', 'target.com', 'walmart.com', 
+            'newegg.com', 'ebay.com', 'wirecutter.com', 'cnet.com', 
+            'techradar.com', 'pcmag.com', 'tomsguide.com', 'tomshardware.com'
+        }
+        
+        if 'items' in data:
+            seen_domains = set()
+            for item in data['items']:
+                link = item.get('link', '')
+                title = item.get('title', '')
+                
+                # Extract domain from URL
+                try:
+                    from urllib.parse import urlparse
+                    domain = urlparse(link).netloc.lower()
+                    # Remove 'www.' prefix
+                    domain = domain.replace('www.', '')
+                    
+                    # Check if it's a target domain and we haven't seen this domain yet
+                    if domain in target_domains and domain not in seen_domains:
+                        found_links.append(link)
+                        seen_domains.add(domain)
+                        print(f"✅ Found product link: {link}")
+                        
+                        if len(found_links) >= max_results:
+                            break
+                            
+                except Exception as e:
+                    print(f"⚠️ Error parsing URL {link}: {e}")
+                    continue
+        
+        print(f"🎯 Found {len(found_links)} product links for '{search_term}'")
+        
+        # If no links found via API, use fallback links
+        if not found_links:
+            print(f"🔄 No API links found for '{search_term}', using fallback links")
+            return create_fallback_product_links(search_term)
+            
+        return found_links
+        
+    except Exception as e:
+        print(f"❌ Error searching Google API for '{search_term}': {e}")
+        return create_fallback_product_links(search_term)
+
+def create_fallback_product_links(search_term):
+    """Create fallback product links when Google API is not available"""
+    # Create basic search links for major retailers
+    from urllib.parse import quote
+    encoded_term = quote(search_term)
+    
+    fallback_links = [
+        f"https://www.amazon.com/s?k={encoded_term}",
+        f"https://www.bestbuy.com/site/searchpage.jsp?st={encoded_term}",
+        f"https://www.target.com/s?searchTerm={encoded_term}"
+    ]
+    
+    print(f"🔗 Created {len(fallback_links)} fallback links for '{search_term}'")
+    return fallback_links
+
+def curate_links_with_ai(search_term, found_links, model="gemini-1.5-flash"):
+    """Use AI to evaluate and curate the best links for a search term"""
+    if not found_links:
+        return []
+    
+    try:
+        prompt = f"""Evaluate these links for the search term "{search_term}" and select the most relevant and helpful ones.
+
+Search term: {search_term}
+Found links: {found_links}
+
+Please evaluate each link and select only the most relevant ones based on:
+1. Relevance to the search term
+2. Trustworthiness of the domain
+3. Likelihood to be helpful for someone researching "{search_term}"
+
+Return a JSON array of the best links (maximum 2-3 links) in this format:
+```json
+[
+  {{
+    "url": "https://example.com/product",
+    "relevance_score": 9,
+    "description": "Official product page with detailed specs"
+  }}
+]
+```
+
+Focus on official stores, reputable review sites, and direct product pages. Avoid affiliate or spam links."""
+
+        response = call_ai_model(model, prompt, max_tokens=500)
+        
+        # Extract JSON from response
+        json_pattern = r'```json\s*(\[.*?\])\s*```'
+        match = re.search(json_pattern, response, re.DOTALL)
+        
+        if match:
+            import json
+            curated_links = json.loads(match.group(1))
+            print(f"🎯 AI curated {len(curated_links)} links for '{search_term}'")
+            return curated_links
+        else:
+            print(f"⚠️ No valid JSON found in AI response for '{search_term}'")
+            return [{"url": link, "relevance_score": 5, "description": "Product link"} for link in found_links[:2]]
+    
+    except Exception as e:
+        print(f"❌ Error curating links for '{search_term}': {e}")
+        # Return basic structure if AI fails
+        return [{"url": link, "relevance_score": 5, "description": "Product link"} for link in found_links[:2]]
+
+def enhance_summary_with_links(summary, search_terms, enhanced_links):
+    """Add enhanced link data to the response"""
+    return {
+        "enhanced_summary": summary,
+        "extracted_terms": search_terms,
+        "enhanced_links": enhanced_links,
+        "link_enhancement_enabled": True
+    }
+
 def analyze_reddit_data(submissions, query):
     """Perform comprehensive analysis of Reddit data"""
     analysis = {
@@ -1204,16 +1479,38 @@ def search_summarize():
     if not isinstance(agent_count, int) or agent_count < 1 or agent_count > 5:
         return jsonify({'error': 'agent_count must be between 1 and 5'}), 400
     
-    # Validate models
-    valid_models = [
+    # Validate models with tier-based access
+    # For now, we'll assume anonymous users (no auth header)
+    # TODO: Add proper authentication header parsing
+    user_tier = 'anonymous'  # This will be enhanced with proper auth
+    
+    all_valid_models = [
+        'gemini-1.5-flash',
+        'gemini-1.5-pro',
         'claude-3-5-haiku-20241022',
         'claude-3-5-sonnet-20241022', 
         'claude-3-opus-20240229'
     ]
-    if model not in valid_models:
-        return jsonify({'error': f'Invalid model. Must be one of: {valid_models}'}), 400
-    if coordinator_model not in valid_models:
-        return jsonify({'error': f'Invalid coordinator_model. Must be one of: {valid_models}'}), 400
+    
+    if model not in all_valid_models:
+        return jsonify({'error': f'Invalid model. Must be one of: {all_valid_models}'}), 400
+    
+    # Check if user tier allows this model
+    if not is_model_allowed(model, user_tier):
+        if user_tier == 'anonymous':
+            return jsonify({'error': 'This model requires sign-in. Please sign in to access more models.'}), 403
+        elif user_tier == 'free':
+            return jsonify({'error': 'This model requires a paid subscription. Please upgrade your account.'}), 403
+    
+    if coordinator_model not in all_valid_models:
+        return jsonify({'error': f'Invalid coordinator_model. Must be one of: {all_valid_models}'}), 400
+    
+    # Only validate coordinator model for web search mode
+    if use_web_search and not is_model_allowed(coordinator_model, user_tier):
+        if user_tier == 'anonymous':
+            return jsonify({'error': 'This coordinator model requires sign-in.'}), 403
+        elif user_tier == 'free':
+            return jsonify({'error': 'This coordinator model requires a paid subscription.'}), 403
 
     print(f"🔍 Search request: query='{query}', max_posts={max_posts}, model={model}")
     if use_web_search:
@@ -1395,9 +1692,6 @@ def handle_traditional_search_mode(query: str, max_posts: int, model: str):
         if len(full_text) > 8000:  # Rough token limit
             full_text = full_text[:8000] + "...\n[Text truncated to stay within API limits]"
 
-        # Anthropic API setup
-        client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
         # Create a comprehensive prompt with analysis data
         prompt = f"""Please analyze the following Reddit data about '{query}' and provide a comprehensive summary and evaluation.
 
@@ -1443,39 +1737,75 @@ Pay special attention to:
 - Consistent brand mentions across multiple sources
 - Price points with community validation
 
+After your analysis, please also provide structured data for link enhancement by including the following JSON block at the end:
+
+=== LINK ENHANCEMENT DATA ===
+```json
+{{
+  "reddit_links": [
+    // List of key Reddit URLs from the analysis that contain valuable information
+  ],
+  "search_terms": [
+    // List of specific product names, brands, or search terms that would benefit from external links
+    // Focus on concrete products, specific models, brand names, or services mentioned
+    // Examples: "Sony WH-1000XM4", "iPhone 15 Pro", "Toyota Camry 2024", "Best Buy"
+  ]
+}}
+```
+
 === RAW CONTENT ===
 {full_text}
 
-Please provide actionable insights based on both the quantitative analysis and qualitative content."""
+Please provide actionable insights based on both the quantitative analysis and qualitative content, followed by the JSON data for link enhancement."""
 
-        # Get summary from Claude with retry logic for rate limiting
+        # Get summary from AI model with retry logic for rate limiting
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                message = client.messages.create(
-                    model=model,  # Use the selected model
-                    max_tokens=1500,
-                    messages=[
-                        {"role": "user", "content": prompt}
-                    ]
-                ).content[0].text
+                message = call_ai_model(model, prompt, max_tokens=1500)
                 break
-            except anthropic.RateLimitError as e:
-                if attempt == max_retries - 1:
-                    return jsonify({'error': f'Rate limit exceeded. Please try again in a few minutes. Details: {str(e)}'}), 429
-                
-                # Exponential backoff with jitter
-                wait_time = (2 ** attempt) + random.uniform(0, 1)
-                print(f"Rate limit hit, waiting {wait_time:.2f} seconds before retry {attempt + 1}/{max_retries}")
-                time.sleep(wait_time)
             except Exception as e:
-                return jsonify({'error': f'API error: {str(e)}'}), 500
+                if "rate limit" in str(e).lower() or "quota" in str(e).lower():
+                    if attempt == max_retries - 1:
+                        return jsonify({'error': f'Rate limit exceeded. Please try again in a few minutes. Details: {str(e)}'}), 429
+                    
+                    # Exponential backoff with jitter
+                    wait_time = (2 ** attempt) + random.uniform(0, 1)
+                    print(f"Rate limit hit, waiting {wait_time:.2f} seconds before retry {attempt + 1}/{max_retries}")
+                    time.sleep(wait_time)
+                else:
+                    return jsonify({'error': f'AI API error: {str(e)}'}), 500
+
+        # Enhanced link discovery process
+        print("🔗 Starting enhanced link discovery...")
+        
+        # Extract link enhancement data from AI response
+        link_data = extract_link_enhancement_data(message)
+        search_terms = link_data.get('search_terms', [])
+        
+        # Search for relevant links for each term
+        enhanced_links = {}
+        for term in search_terms[:5]:  # Limit to 5 terms to avoid too many API calls
+            print(f"🔍 Searching for links for term: '{term}'")
+            product_links = search_google_for_product_links(term, max_results=3)
+            
+            if product_links:
+                # Use AI to curate the best links
+                curated_links = curate_links_with_ai(term, product_links, model)
+                enhanced_links[term] = curated_links
+            else:
+                enhanced_links[term] = []
+        
+        print(f"✅ Enhanced link discovery complete. Found links for {len([k for k, v in enhanced_links.items() if v])} terms")
 
         return jsonify({
             'summary': message, 
             'sources': sources,
             'analysis': analysis,  # Include the comprehensive analysis
-            'search_mode': 'traditional_reddit_search'
+            'search_mode': 'traditional_reddit_search',
+            'enhanced_links': enhanced_links,  # Add enhanced links
+            'extracted_search_terms': search_terms,  # Add extracted terms
+            'link_enhancement_enabled': True
         })
 
     except Exception as e:

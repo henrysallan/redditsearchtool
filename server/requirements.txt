@@ -4,3 +4,4 @@ python-dotenv
 anthropic
 playwright
 asyncio
+google-generativeai

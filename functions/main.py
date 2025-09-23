@@ -4,6 +4,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 import praw
 import anthropic
+import google.generativeai as genai
 import os
 import json
 import logging
@@ -26,6 +27,67 @@ CORS(app)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("functions")
+
+def call_ai_model(model: str, prompt: str, max_tokens: int = 1500):
+    """
+    Universal function to call either Claude or Gemini based on model name
+    """
+    if model.startswith('gemini-'):
+        # Use Gemini API
+        try:
+            # Configure Gemini API key
+            genai.configure(api_key=os.environ.get("GOOGLE_AI_API_KEY"))
+            gemini_model = genai.GenerativeModel(model)
+            response = gemini_model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=0.7,
+                )
+            )
+            return response.text
+        except Exception as e:
+            raise Exception(f"Gemini API error: {str(e)}")
+    else:
+        # Use Claude API
+        try:
+            client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+            message = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            return message.content[0].text
+        except Exception as e:
+            raise Exception(f"Claude API error: {str(e)}")
+
+# User tier and model access control
+def get_user_tier(user_id=None):
+    """Determine user tier - for now all authenticated users are 'free'"""
+    if not user_id:
+        return 'anonymous'
+    # TODO: Add subscription logic here later
+    return 'free'
+
+def get_allowed_models(tier):
+    """Get list of models allowed for each tier"""
+    if tier == 'anonymous' or tier == 'free':
+        return ['gemini-1.5-flash']
+    elif tier == 'paid':
+        return [
+            'gemini-1.5-flash', 
+            'gemini-1.5-pro',
+            'claude-3-5-haiku-20241022',
+            'claude-3-5-sonnet-20241022', 
+            'claude-3-opus-20240229'
+        ]
+    return []
+
+def is_model_allowed(model, tier):
+    """Check if a model is allowed for the given user tier"""
+    return model in get_allowed_models(tier)
 
 @app.before_request
 def _before_request():
@@ -85,6 +147,12 @@ def estimate_cost():
         'claude-3-opus-20240229': {'input': 15.00, 'output': 75.00}        # Opus
     }
     
+    # Gemini pricing (as of 2024) - per million tokens
+    gemini_pricing = {
+        'gemini-1.5-flash': {'input': 0.075, 'output': 0.30},             # Flash (free tier available)
+        'gemini-1.5-pro': {'input': 3.50, 'output': 10.50}               # Pro
+    }
+    
     if use_web_search:
         # Multi-agent web search cost estimation
         agent_input_tokens = agent_count * 1000
@@ -134,7 +202,13 @@ def estimate_cost():
         estimated_input_tokens = max_posts * (300 + 5 * 50) + 500
         estimated_output_tokens = 400
         
-        pricing = claude_pricing.get(model, claude_pricing['claude-3-5-sonnet-20241022'])
+        # Determine pricing based on model
+        if model.startswith('gemini-'):
+            pricing = gemini_pricing.get(model, gemini_pricing['gemini-1.5-flash'])
+            ai_provider = 'gemini'
+        else:
+            pricing = claude_pricing.get(model, claude_pricing['claude-3-5-sonnet-20241022'])
+            ai_provider = 'claude'
         
         input_cost = (estimated_input_tokens / 1_000_000) * pricing['input']
         output_cost = (estimated_output_tokens / 1_000_000) * pricing['output']
@@ -176,12 +250,17 @@ def search_summarize():
         
         query = data.get('query')
         max_posts = data.get('max_posts', 3)
-        model = data.get('model', 'claude-3-5-sonnet-20241022')
+        model = data.get('model', 'gemini-1.5-flash')
         
         # New web search mode parameters
         use_web_search = data.get('use_web_search', False)
         agent_count = data.get('agent_count', 3)
-        coordinator_model = data.get('coordinator_model', 'claude-3-5-sonnet-20241022')
+        
+        # Set coordinator model based on user tier
+        user_tier = 'anonymous'  # This will be enhanced with proper auth
+        allowed_models = get_allowed_models(user_tier)
+        default_coordinator = allowed_models[0] if allowed_models else 'gemini-1.5-flash'
+        coordinator_model = data.get('coordinator_model', default_coordinator)
 
         if not query:
             return jsonify({'error': 'Query is required'}), 400
@@ -194,16 +273,37 @@ def search_summarize():
         if not isinstance(agent_count, int) or agent_count < 1 or agent_count > 5:
             return jsonify({'error': 'agent_count must be between 1 and 5'}), 400
 
-        # Validate models
-        valid_models = [
+        # Validate models with tier-based access
+        # For now, we'll assume anonymous users (no auth header)
+        # TODO: Add proper authentication header parsing
+        user_tier = 'anonymous'  # This will be enhanced with proper auth
+        
+        all_valid_models = [
+            'gemini-1.5-flash',
+            'gemini-1.5-pro',
             'claude-3-5-haiku-20241022',
             'claude-3-5-sonnet-20241022', 
             'claude-3-opus-20240229'
         ]
-        if model not in valid_models:
-            return jsonify({'error': f'Invalid model. Must be one of: {valid_models}'}), 400
-        if coordinator_model not in valid_models:
-            return jsonify({'error': f'Invalid coordinator_model. Must be one of: {valid_models}'}), 400
+        
+        if model not in all_valid_models:
+            return jsonify({'error': f'Invalid model. Must be one of: {all_valid_models}'}), 400
+        
+        # Check if user tier allows this model
+        if not is_model_allowed(model, user_tier):
+            if user_tier == 'anonymous':
+                return jsonify({'error': 'This model requires sign-in. Please sign in to access more models.'}), 403
+            elif user_tier == 'free':
+                return jsonify({'error': 'This model requires a paid subscription. Please upgrade your account.'}), 403
+        
+        if coordinator_model not in all_valid_models:
+            return jsonify({'error': f'Invalid coordinator_model. Must be one of: {all_valid_models}'}), 400
+        
+        if not is_model_allowed(coordinator_model, user_tier):
+            if user_tier == 'anonymous':
+                return jsonify({'error': 'This coordinator model requires sign-in.'}), 403
+            elif user_tier == 'free':
+                return jsonify({'error': 'This coordinator model requires a paid subscription.'}), 403
 
         logger.info(json.dumps({
             "event": "search_request",
@@ -243,6 +343,7 @@ def search_summarize():
             'request_id': getattr(request, "_req_id", "n/a"),
             'env_present': {
                 'ANTHROPIC_API_KEY': bool(os.environ.get('ANTHROPIC_API_KEY')),
+                'GOOGLE_AI_API_KEY': bool(os.environ.get('GOOGLE_AI_API_KEY')),
                 'REDDIT_CLIENT_ID': bool(os.environ.get('REDDIT_CLIENT_ID')),
                 'REDDIT_CLIENT_SECRET': bool(os.environ.get('REDDIT_CLIENT_SECRET')),
                 'REDDIT_USER_AGENT': bool(os.environ.get('REDDIT_USER_AGENT')),
@@ -419,9 +520,6 @@ def handle_traditional_search_mode(query: str, max_posts: int, model: str):
         if len(full_text) > 8000:
             full_text = full_text[:8000] + "...\n[Text truncated to stay within API limits]"
 
-        # Anthropic API setup
-        client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-
         # Create comprehensive prompt
         prompt = f"""Please analyze the following Reddit data about '{query}' and provide a comprehensive summary.
 
@@ -439,33 +537,29 @@ Based on this analysis and the content below, provide:
 === RAW CONTENT ===
 {full_text}"""
 
-        # Get summary from Claude with retry logic
+        # Get summary using universal AI model with retry logic
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                message = client.messages.create(
-                    model=model,
-                    max_tokens=1500,
-                    messages=[
-                        {"role": "user", "content": prompt}
-                    ]
-                ).content[0].text
+                message = call_ai_model(model, prompt, max_tokens=1500)
                 break
             except Exception as e:
                 if attempt == max_retries - 1:
                     logger.error(json.dumps({
-                        "event": "anthropic_error",
+                        "event": "ai_model_error",
                         "id": getattr(request, "_req_id", "n/a"),
+                        "model": model,
                         "error": str(e),
                         "attempt": attempt + 1
                     }))
-                    return jsonify({'error': f'API error: {str(e)}'}), 500
+                    return jsonify({'error': f'AI API error: {str(e)}'}), 500
                 
                 # Wait before retry
                 wait_time = (2 ** attempt) + 0.5
                 logger.warning(json.dumps({
-                    "event": "anthropic_retry",
+                    "event": "ai_model_retry",
                     "id": getattr(request, "_req_id", "n/a"),
+                    "model": model,
                     "attempt": attempt + 1,
                     "wait_time": wait_time
                 }))
@@ -478,10 +572,119 @@ Based on this analysis and the content below, provide:
             "sources_count": len(sources)
         }))
 
+        # AI-powered enhanced links generation
+        extracted_terms = []
+        enhanced_links = {}
+        
+        try:
+            # Step 1: Use AI to extract meaningful search terms from the summary
+            extraction_prompt = f"""Based on this Reddit discussion summary, extract 3-5 specific and useful search terms that would help someone learn more about the topic. Focus on:
+- Product names, brand names, model numbers
+- Specific locations, restaurants, services
+- Technical terms, concepts, or methodologies
+- Specific titles (books, movies, games, etc.)
+
+Summary: {message}
+
+Return only a comma-separated list of terms, no explanations:"""
+            
+            ai_extracted_terms = call_ai_model(model, extraction_prompt, max_tokens=100)
+            extracted_terms = [term.strip() for term in ai_extracted_terms.split(',') if term.strip()][:5]
+            
+            logger.info(json.dumps({
+                "event": "ai_terms_extracted",
+                "id": getattr(request, "_req_id", "n/a"),
+                "terms": extracted_terms
+            }))
+            
+            # Step 2: Use Google Search API to find external links for each term
+            api_key = os.environ.get("GOOGLE_SEARCH_API_KEY")
+            search_engine_id = os.environ.get("GOOGLE_SEARCH_ENGINE_ID")
+            
+            if api_key and search_engine_id and extracted_terms:
+                for term in extracted_terms[:3]:  # Limit to 3 terms
+                    # Search Google for general web results (not Reddit)
+                    search_query = term
+                    api_url = "https://www.googleapis.com/customsearch/v1"
+                    params = {
+                        'key': api_key,
+                        'cx': search_engine_id,
+                        'q': search_query,
+                        'num': 5,  # Get 5 results to choose from
+                        'fields': 'items(title,link,snippet)'
+                    }
+                    
+                    try:
+                        response = requests.get(api_url, params=params, timeout=10)
+                        response.raise_for_status()
+                        search_data = response.json()
+                        
+                        if 'items' in search_data:
+                            # Step 3: Use AI to curate the best links
+                            search_results = search_data['items']
+                            results_text = "\n".join([f"{i+1}. {item['title']} - {item['link']} - {item.get('snippet', '')[:100]}" 
+                                                    for i, item in enumerate(search_results)])
+                            
+                            curation_prompt = f"""From these search results for "{term}", select the 2 most helpful and relevant links. Consider:
+- Authoritative sources (official sites, reputable publications)
+- Practical value (reviews, guides, comparisons)
+- Avoid spam, low-quality, or overly promotional content
+
+Search results:
+{results_text}
+
+Return only the numbers (e.g., "1,3") of the best links:"""
+                            
+                            ai_selection = call_ai_model(model, curation_prompt, max_tokens=50)
+                            selected_indices = []
+                            for num in ai_selection.split(','):
+                                try:
+                                    idx = int(num.strip()) - 1
+                                    if 0 <= idx < len(search_results):
+                                        selected_indices.append(idx)
+                                except:
+                                    pass
+                            
+                            # Build curated links
+                            curated_links = []
+                            for idx in selected_indices[:2]:  # Max 2 links per term
+                                item = search_results[idx]
+                                curated_links.append({
+                                    'url': item['link'],
+                                    'title': item['title'],
+                                    'snippet': item.get('snippet', '')[:200],
+                                    'relevance_score': 0.9  # High score for AI-curated links
+                                })
+                            
+                            if curated_links:
+                                enhanced_links[term] = curated_links
+                                
+                    except Exception as search_error:
+                        logger.warning(json.dumps({
+                            "event": "google_search_error",
+                            "id": getattr(request, "_req_id", "n/a"),
+                            "term": term,
+                            "error": str(search_error)
+                        }))
+                        
+        except Exception as extraction_error:
+            logger.warning(json.dumps({
+                "event": "enhanced_links_error", 
+                "id": getattr(request, "_req_id", "n/a"),
+                "error": str(extraction_error)
+            }))
+            # Fallback to basic term extraction
+            import re
+            terms = re.findall(r'\b\w+\b', query.lower())
+            stop_words = {'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'what', 'how', 'where', 'when', 'why', 'who'}
+            extracted_terms = [term for term in terms if len(term) > 2 and term not in stop_words][:3]
+
         return jsonify({
             'summary': message,
             'sources': sources,
             'analysis': analysis,
+            'enhanced_links': enhanced_links,
+            'extracted_search_terms': extracted_terms,
             'search_mode': 'traditional_reddit_search'
         })
 
@@ -534,6 +737,7 @@ def health_check():
             'region': 'local',
             'env_present': {
                 'ANTHROPIC_API_KEY': bool(os.environ.get('ANTHROPIC_API_KEY')),
+                'GOOGLE_AI_API_KEY': bool(os.environ.get('GOOGLE_AI_API_KEY')),
                 'REDDIT_CLIENT_ID': bool(os.environ.get('REDDIT_CLIENT_ID')),
                 'REDDIT_CLIENT_SECRET': bool(os.environ.get('REDDIT_CLIENT_SECRET')),
                 'REDDIT_USER_AGENT': bool(os.environ.get('REDDIT_USER_AGENT')),
@@ -1014,7 +1218,8 @@ def analyze_reddit_data(submissions, query):
         "REDDIT_CLIENT_SECRET",
         "REDDIT_USER_AGENT",
         "GOOGLE_SEARCH_API_KEY",
-        "GOOGLE_SEARCH_ENGINE_ID"
+        "GOOGLE_SEARCH_ENGINE_ID",
+        "GOOGLE_AI_API_KEY"
     ]
 )
 def api(req: https_fn.Request) -> https_fn.Response:
