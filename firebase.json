@@ -9,7 +9,9 @@
       "REDDIT_CLIENT_SECRET",
       "REDDIT_USER_AGENT",
       "GOOGLE_SEARCH_API_KEY",
-      "GOOGLE_SEARCH_ENGINE_ID"
+      "GOOGLE_SEARCH_ENGINE_ID",
+      "STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET"
     ],
     "ignore": [
       "node_modules",

@@ -1,8 +1,43 @@
-<!doctype html>
+npm<!doctype html>
 <html>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="
+      default-src 'self';
+      script-src 'self' 'unsafe-inline' 'unsafe-eval' 
+        https://js.stripe.com 
+        https://checkout.stripe.com 
+        https://m.stripe.network 
+        https://apis.google.com 
+        https://www.gstatic.com;
+      style-src 'self' 'unsafe-inline' 
+        https://fonts.googleapis.com 
+        https://m.stripe.network;
+      font-src 'self' https://fonts.gstatic.com;
+      img-src 'self' data: https:;
+      connect-src 'self' 
+        https://api.stripe.com 
+        https://checkout.stripe.com 
+        https://api-cny745n5ha-uc.a.run.app
+        https://identitytoolkit.googleapis.com
+        https://firestore.googleapis.com
+        https://securetoken.googleapis.com
+        https://accounts.google.com;
+      frame-src 'self' 
+        https://js.stripe.com 
+        https://hooks.stripe.com 
+        https://checkout.stripe.com 
+        https://m.stripe.network 
+        https://accounts.google.com
+        https://redditsearchtool.firebaseapp.com;
+      child-src 'self' 
+        https://js.stripe.com 
+        https://hooks.stripe.com 
+        https://checkout.stripe.com 
+        https://accounts.google.com
+        https://redditsearchtool.firebaseapp.com;
+    " />
     <title>Reddit Summarizer</title>
   </head>
   <body>

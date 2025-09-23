@@ -15,7 +15,9 @@ export const SearchHistorySidebar: React.FC<SearchHistorySidebarProps> = ({
 }) => {
   const { user } = useAuth();
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
+  const [filteredHistory, setFilteredHistory] = useState<SearchHistoryItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchFilter, setSearchFilter] = useState('');
 
   useEffect(() => {
     if (isOpen && user) {
@@ -30,12 +32,26 @@ export const SearchHistorySidebar: React.FC<SearchHistorySidebarProps> = ({
     try {
       const history = await getUserSearchHistory(user.uid);
       setSearchHistory(history);
+      setFilteredHistory(history); // Initially show all results
     } catch (error) {
       console.error('Error loading search history:', error);
     } finally {
       setLoading(false);
     }
   };
+
+  // Filter search history based on search filter
+  useEffect(() => {
+    if (!searchFilter.trim()) {
+      setFilteredHistory(searchHistory);
+    } else {
+      const filtered = searchHistory.filter(search => 
+        search.query.toLowerCase().includes(searchFilter.toLowerCase()) ||
+        search.summary.toLowerCase().includes(searchFilter.toLowerCase())
+      );
+      setFilteredHistory(filtered);
+    }
+  }, [searchFilter, searchHistory]);
 
   const formatDate = (date: Date) => {
     const now = new Date();
@@ -78,41 +94,62 @@ export const SearchHistorySidebar: React.FC<SearchHistorySidebarProps> = ({
       <div style={{
         padding: '20px',
         borderBottom: '2px solid #000000',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
         backgroundColor: '#f8f9fa',
       }}>
-        <h2 style={{
-          margin: 0,
-          fontSize: '1.25rem',
-          fontWeight: '700',
-          color: '#000000',
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '16px',
         }}>
-          Search History
-        </h2>
-        <button
-          onClick={onClose}
+          <h2 style={{
+            margin: 0,
+            fontSize: '1.25rem',
+            fontWeight: '700',
+            color: '#000000',
+          }}>
+            Search History
+          </h2>
+          <button
+            onClick={onClose}
+            style={{
+              background: 'none',
+              border: '2px solid #000000',
+              padding: '8px 12px',
+              cursor: 'pointer',
+              fontSize: '1rem',
+              fontWeight: '600',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = '#000000';
+              e.currentTarget.style.color = '#ffffff';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+              e.currentTarget.style.color = '#000000';
+            }}
+          >
+            ✕
+          </button>
+        </div>
+        
+        {/* Search Filter */}
+        <input
+          type="text"
+          placeholder="Filter by keywords..."
+          value={searchFilter}
+          onChange={(e) => setSearchFilter(e.target.value)}
           style={{
-            background: 'none',
-            border: '2px solid #000000',
+            width: '100%',
             padding: '8px 12px',
-            cursor: 'pointer',
-            fontSize: '1rem',
-            fontWeight: '600',
-            transition: 'all 0.2s ease',
+            border: '2px solid #000000',
+            fontSize: '0.875rem',
+            backgroundColor: '#ffffff',
+            color: '#000000',
+            outline: 'none',
           }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = '#000000';
-            e.currentTarget.style.color = '#ffffff';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-            e.currentTarget.style.color = '#000000';
-          }}
-        >
-          ✕
-        </button>
+        />
       </div>
 
       {/* Content */}
@@ -140,13 +177,22 @@ export const SearchHistorySidebar: React.FC<SearchHistorySidebarProps> = ({
             <p>No search history yet.</p>
             <p>Start by making your first search!</p>
           </div>
+        ) : filteredHistory.length === 0 ? (
+          <div style={{
+            textAlign: 'center',
+            color: '#666666',
+            marginTop: '50px',
+          }}>
+            <p>No searches match your filter.</p>
+            <p>Try different keywords or clear the search.</p>
+          </div>
         ) : (
           <div style={{
             display: 'flex',
             flexDirection: 'column',
             gap: '16px',
           }}>
-            {searchHistory.map((search) => (
+            {filteredHistory.map((search) => (
               <div
                 key={search.id}
                 onClick={() => onSelectSearch(search)}

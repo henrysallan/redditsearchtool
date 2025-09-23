@@ -25,10 +25,29 @@ export const ANONYMOUS_COOKIE_NAME = 'reddit_search_count';
 // User tier definitions
 export type UserTier = 'anonymous' | 'free' | 'paid';
 
-export const getUserTier = (user: any): UserTier => {
+export const getUserTier = async (user: any): Promise<UserTier> => {
   if (!user) return 'anonymous';
-  // For now, all signed-in users are 'free' tier
-  // Later we'll add subscription logic here
+  
+  // Check if user has active subscription
+  try {
+    const userDoc = doc(db, 'users', user.uid);
+    const userSnapshot = await getDoc(userDoc);
+    const userData = userSnapshot.data();
+    
+    if (userData?.subscription?.status === 'active') {
+      return 'paid';
+    }
+  } catch (error) {
+    console.error('Error checking subscription status:', error);
+  }
+  
+  return 'free';
+};
+
+// Synchronous version for immediate UI updates
+export const getUserTierSync = (user: any): UserTier => {
+  if (!user) return 'anonymous';
+  // Default to free for immediate UI, will update async
   return 'free';
 };
 
@@ -177,9 +196,11 @@ export const resetAnonymousUsage = (): void => {
   document.cookie = `${ANONYMOUS_COOKIE_NAME}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
 };
 
-export const getUsageMessage = (status: UsageStatus): string => {
+export const getUsageMessage = (status: UsageStatus, userTier?: UserTier): string => {
   if (status.isAuthenticated) {
-    if (status.limit === Infinity) {
+    if (userTier === 'paid') {
+      return ''; // Hide usage message for paid users
+    } else if (status.limit === Infinity) {
       return 'Unlimited';
     } else if (status.canSearch) {
       return `${status.searchCount}/${status.limit} daily searches used`;

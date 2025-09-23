@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import praw
 import anthropic
 import google.generativeai as genai
+import stripe
 import os
 import json
 import logging
@@ -20,6 +21,9 @@ from urllib.parse import quote
 
 # Load environment variables
 load_dotenv()
+
+# Stripe will be configured using Firebase Secrets
+# stripe.api_key will be set in functions that need it
 
 # Create Flask app
 app = Flask(__name__)
@@ -1210,6 +1214,340 @@ def analyze_reddit_data(submissions, query):
         'temporal_analysis': temporal_analysis
     }
 
+@app.route('/api/create-checkout-session', methods=['POST'])
+def create_checkout_session():
+    """Create a Stripe checkout session for subscription"""
+    try:
+        # Set Stripe API key from Firebase Secrets
+        stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+        
+        data = request.get_json()
+        user_id = data.get('userId')
+        user_email = data.get('userEmail')
+        price_id = data.get('priceId')
+        coupon_code = data.get('couponCode')  # Optional coupon code
+        
+        if not all([user_id, user_email, price_id]):
+            return {"error": "Missing required fields"}, 400
+        
+        # Build checkout session parameters
+        session_params = {
+            'payment_method_types': ['card'],
+            'line_items': [{
+                'price': price_id,
+                'quantity': 1,
+            }],
+            'mode': 'subscription',
+            'success_url': 'https://redditsearchtool.web.app/?success=true&session_id={CHECKOUT_SESSION_ID}',
+            'cancel_url': 'https://redditsearchtool.web.app/?canceled=true',
+            'customer_email': user_email,
+            'metadata': {
+                'user_id': user_id
+            },
+            'subscription_data': {
+                'metadata': {
+                    'user_id': user_id
+                }
+            }
+        }
+        
+        # Either use coupon or allow promotion codes, but not both
+        if coupon_code:
+            session_params['discounts'] = [{
+                'coupon': coupon_code
+            }]
+        else:
+            session_params['allow_promotion_codes'] = True  # Allow users to enter promo codes
+        
+        # Create checkout session
+        checkout_session = stripe.checkout.Session.create(**session_params)
+        
+        return {"sessionId": checkout_session.id}
+        
+    except Exception as e:
+        logger.error(f"Error creating checkout session: {str(e)}")
+        return {"error": str(e)}, 500
+
+@app.route('/api/stripe-webhook', methods=['POST'])
+def stripe_webhook():
+    """Handle Stripe webhook events"""
+    # Set Stripe API key from Firebase Secrets
+    stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+    
+    payload = request.get_data()
+    sig_header = request.headers.get('stripe-signature')
+    endpoint_secret = os.environ.get('STRIPE_WEBHOOK_SECRET')
+    
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, endpoint_secret
+        )
+    except ValueError as e:
+        logger.error(f"Invalid payload: {e}")
+        return {"error": "Invalid payload"}, 400
+    except stripe.error.SignatureVerificationError as e:
+        logger.error(f"Invalid signature: {e}")
+        return {"error": "Invalid signature"}, 400
+    
+    # Handle the event
+    if event['type'] == 'checkout.session.completed':
+        session = event['data']['object']
+        handle_successful_payment(session)
+    elif event['type'] == 'invoice.payment_succeeded':
+        invoice = event['data']['object']
+        handle_subscription_renewal(invoice)
+    elif event['type'] == 'customer.subscription.deleted':
+        subscription = event['data']['object']
+        handle_subscription_cancelled(subscription)
+    
+    return {"status": "success"}
+
+@app.route('/api/admin/grant-access', methods=['POST'])
+def grant_user_access():
+    """Admin function to grant free access to specific users"""
+    try:
+        data = request.get_json()
+        user_id = data.get('userId')
+        admin_key = data.get('adminKey')
+        
+        # Simple admin authentication (you should change this key)
+        ADMIN_KEY = "reddit_search_admin_2025"  # Change this to something secure
+        
+        if admin_key != ADMIN_KEY:
+            return {"error": "Unauthorized"}, 401
+            
+        if not user_id:
+            return {"error": "Missing userId"}, 400
+        
+        # Update user's subscription status in Firestore
+        from google.cloud import firestore
+        db = firestore.Client()
+        
+        user_ref = db.collection('users').document(user_id)
+        user_ref.set({
+            'subscription': {
+                'status': 'active',
+                'customer_id': 'manual_admin_grant',
+                'subscription_id': 'manual_admin_grant',
+                'created_at': firestore.SERVER_TIMESTAMP,
+                'granted_by': 'admin'
+            }
+        }, merge=True)
+        
+        logger.info(f"Admin granted free access to user {user_id}")
+        
+        return {
+            "status": "success",
+            "message": f"Free access granted to user {user_id}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error granting admin access: {str(e)}")
+        return {"error": str(e)}, 500
+
+@app.route('/api/test-stripe', methods=['GET'])
+def test_stripe():
+    """Test endpoint to check Stripe products and prices"""
+    try:
+        stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+        
+        # List all products
+        products = stripe.Product.list(limit=10)
+        
+        # List all prices
+        prices = stripe.Price.list(limit=10)
+        
+        return {
+            "products": [{"id": p.id, "name": p.name} for p in products.data],
+            "prices": [{"id": p.id, "product": p.product, "amount": p.unit_amount, "currency": p.currency} for p in prices.data]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error testing Stripe: {str(e)}")
+        return {"error": str(e)}, 500
+
+@app.route('/api/unsubscribe', methods=['POST'])
+def unsubscribe():
+    """Cancel user's subscription"""
+    try:
+        data = request.get_json()
+        user_id = data.get('userId')
+        
+        if not user_id:
+            return {"error": "User ID is required"}, 400
+        
+        # Configure Stripe
+        stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+        
+        # Get user's subscription info from Firestore
+        from google.cloud import firestore
+        db = firestore.Client()
+        
+        user_ref = db.collection('users').document(user_id)
+        user_doc = user_ref.get()
+        
+        if not user_doc.exists:
+            return {"error": "User not found"}, 404
+        
+        user_data = user_doc.to_dict()
+        subscription_info = user_data.get('subscription', {})
+        subscription_id = subscription_info.get('subscription_id')
+        
+        if not subscription_id:
+            return {"error": "No active subscription found"}, 400
+        
+        # Cancel the subscription in Stripe
+        subscription = stripe.Subscription.modify(
+            subscription_id,
+            cancel_at_period_end=True
+        )
+        
+        # Update user's subscription status in Firestore
+        user_ref.update({
+            'subscription.status': 'cancelled',
+            'subscription.cancelled_at': firestore.SERVER_TIMESTAMP,
+            'subscription.cancel_at_period_end': True,
+            'subscription.current_period_end': subscription.current_period_end
+        })
+        
+        logger.info(f"Subscription cancelled for user {user_id}")
+        
+        return {
+            "success": True,
+            "message": "Subscription cancelled successfully",
+            "current_period_end": subscription.current_period_end
+        }
+        
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error during unsubscribe: {str(e)}")
+        return {"error": f"Payment processing error: {str(e)}"}, 500
+    except Exception as e:
+        logger.error(f"Error during unsubscribe: {str(e)}")
+        return {"error": "Failed to cancel subscription"}, 500
+
+@app.route('/api/delete-account', methods=['POST'])
+def delete_account():
+    """Delete user account and all associated data"""
+    try:
+        data = request.get_json()
+        user_id = data.get('userId')
+        
+        if not user_id:
+            return {"error": "User ID is required"}, 400
+        
+        # Configure Stripe
+        stripe.api_key = os.environ.get("STRIPE_SECRET_KEY")
+        
+        # Get user's data from Firestore
+        from google.cloud import firestore
+        db = firestore.Client()
+        
+        user_ref = db.collection('users').document(user_id)
+        user_doc = user_ref.get()
+        
+        if user_doc.exists:
+            user_data = user_doc.to_dict()
+            subscription_info = user_data.get('subscription', {})
+            customer_id = subscription_info.get('customer_id')
+            subscription_id = subscription_info.get('subscription_id')
+            
+            # Cancel subscription if it exists
+            if subscription_id:
+                try:
+                    stripe.Subscription.delete(subscription_id)
+                    logger.info(f"Deleted subscription {subscription_id} for user {user_id}")
+                except stripe.error.StripeError as e:
+                    logger.warning(f"Could not delete subscription: {str(e)}")
+            
+            # Delete customer if it exists
+            if customer_id:
+                try:
+                    stripe.Customer.delete(customer_id)
+                    logger.info(f"Deleted customer {customer_id} for user {user_id}")
+                except stripe.error.StripeError as e:
+                    logger.warning(f"Could not delete customer: {str(e)}")
+        
+        # Delete user data from Firestore
+        user_ref.delete()
+        
+        # Delete search history
+        search_history_ref = db.collection('search_history').where('user_id', '==', user_id)
+        for doc in search_history_ref.stream():
+            doc.reference.delete()
+        
+        logger.info(f"Account deleted for user {user_id}")
+        
+        return {
+            "success": True,
+            "message": "Account deleted successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error during account deletion: {str(e)}")
+        return {"error": "Failed to delete account"}, 500
+
+def handle_successful_payment(session):
+    """Handle successful payment and activate subscription"""
+    try:
+        user_id = session['metadata']['user_id']
+        customer_id = session['customer']
+        subscription_id = session['subscription']
+        
+        # Update user's subscription status in Firestore
+        from google.cloud import firestore
+        db = firestore.Client()
+        
+        user_ref = db.collection('users').document(user_id)
+        user_ref.set({
+            'subscription': {
+                'status': 'active',
+                'customer_id': customer_id,
+                'subscription_id': subscription_id,
+                'created_at': firestore.SERVER_TIMESTAMP
+            }
+        }, merge=True)
+        
+        logger.info(f"Activated subscription for user {user_id}")
+        
+    except Exception as e:
+        logger.error(f"Error handling successful payment: {str(e)}")
+
+def handle_subscription_renewal(invoice):
+    """Handle subscription renewal"""
+    try:
+        customer_id = invoice['customer']
+        # Find user by customer_id and update renewal date
+        # Implementation depends on your needs
+        logger.info(f"Subscription renewed for customer {customer_id}")
+        
+    except Exception as e:
+        logger.error(f"Error handling subscription renewal: {str(e)}")
+
+def handle_subscription_cancelled(subscription):
+    """Handle subscription cancellation"""
+    try:
+        customer_id = subscription['customer']
+        
+        # Find and update user's subscription status
+        from google.cloud import firestore
+        db = firestore.Client()
+        
+        # Query to find user by customer_id
+        users_ref = db.collection('users')
+        query = users_ref.where('subscription.customer_id', '==', customer_id).limit(1)
+        docs = query.stream()
+        
+        for doc in docs:
+            doc.reference.update({
+                'subscription.status': 'cancelled',
+                'subscription.cancelled_at': firestore.SERVER_TIMESTAMP
+            })
+            logger.info(f"Cancelled subscription for user {doc.id}")
+            break
+        
+    except Exception as e:
+        logger.error(f"Error handling subscription cancellation: {str(e)}")
+
 # Firebase Functions entry point
 @https_fn.on_request(
     secrets=[
@@ -1219,7 +1557,9 @@ def analyze_reddit_data(submissions, query):
         "REDDIT_USER_AGENT",
         "GOOGLE_SEARCH_API_KEY",
         "GOOGLE_SEARCH_ENGINE_ID",
-        "GOOGLE_AI_API_KEY"
+        "GOOGLE_AI_API_KEY",
+        "STRIPE_SECRET_KEY",        # Stripe secrets configured
+        "STRIPE_WEBHOOK_SECRET"     # Stripe secrets configured
     ]
 )
 def api(req: https_fn.Request) -> https_fn.Response:

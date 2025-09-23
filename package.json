@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.22.0",
+    "@stripe/stripe-js": "^7.9.0",
     "@tailwindcss/postcss": "^4.1.13",
     "cheerio": "^1.0.0-rc.12",
     "dotenv": "^16.4.5",

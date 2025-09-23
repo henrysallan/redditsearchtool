@@ -5,6 +5,9 @@ import { Header } from './Header';
 import { SearchHistorySidebar } from './SearchHistorySidebar';
 import { AnalyticsDashboard } from './AnalyticsDashboard';
 import { SignInPromptModal } from './SignInPromptModal';
+import { SearchProgressConsole } from './SearchProgressConsole';
+import { SubscriptionPage } from './SubscriptionPage';
+import { UnsubscribePage } from './UnsubscribePage';
 import { apiCall } from './api';
 import { saveSearchToHistory, getSearchById } from './searchHistory';
 import { 
@@ -41,23 +44,31 @@ function AppContent() {
   const [usageStatus, setUsageStatus] = useState<UsageStatus | null>(null);
   const [showSignInModal, setShowSignInModal] = useState(false);
   
+  // Subscription state
+  const [showSubscriptionPage, setShowSubscriptionPage] = useState(false);
+  const [showUnsubscribePage, setShowUnsubscribePage] = useState(false);
+  
   // Tier-based access control
   const [userTier, setUserTier] = useState<UserTier>('anonymous');
   const [availableModels, setAvailableModels] = useState(getAvailableModels('anonymous'));
 
   // Update user tier and available models when user changes
   useEffect(() => {
-    const tier = getUserTier(user);
-    setUserTier(tier);
-    setAvailableModels(getAvailableModels(tier));
-    
-    // Reset model to first available if current model is not allowed
-    if (!isModelAllowed(model, tier)) {
-      const models = getAvailableModels(tier);
-      if (models.length > 0) {
-        setModel(models[0].value);
+    const updateUserTier = async () => {
+      const tier = await getUserTier(user);
+      setUserTier(tier);
+      setAvailableModels(getAvailableModels(tier));
+      
+      // Reset model to first available if current model is not allowed
+      if (!isModelAllowed(model, tier)) {
+        const models = getAvailableModels(tier);
+        if (models.length > 0) {
+          setModel(models[0].value);
+        }
       }
-    }
+    };
+    
+    updateUserTier();
   }, [user, model]);
 
   // Load usage status on component mount and when user changes
@@ -81,6 +92,32 @@ function AppContent() {
       
       const urlParams = new URLSearchParams(window.location.search);
       const searchId = urlParams.get('search');
+      
+      // Handle Stripe success/cancel redirects
+      const success = urlParams.get('success');
+      const canceled = urlParams.get('canceled');
+      const sessionId = urlParams.get('session_id');
+      
+      if (success === 'true') {
+        console.log('🎉 Payment successful! Session ID:', sessionId);
+        // Show success message and refresh user tier
+        alert('🎉 Subscription successful! You now have access to all AI models.');
+        // Update user tier to reflect new subscription
+        const newTier = await getUserTier(user);
+        setUserTier(newTier);
+        // Clean up URL
+        const newUrl = new URL(window.location.href);
+        newUrl.searchParams.delete('success');
+        newUrl.searchParams.delete('session_id');
+        window.history.replaceState({}, '', newUrl.toString());
+      } else if (canceled === 'true') {
+        console.log('❌ Payment canceled');
+        alert('Payment canceled. You can try again anytime.');
+        // Clean up URL
+        const newUrl = new URL(window.location.href);
+        newUrl.searchParams.delete('canceled');
+        window.history.replaceState({}, '', newUrl.toString());
+      }
       
       if (searchId) {
         console.log('🔍 Restoring search from Firestore with ID:', searchId);
@@ -311,11 +348,26 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-white">
-      <Header
-        sidebarOpen={sidebarOpen}
-        onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
-        usageStatus={usageStatus}
-      />
+      {/* Show subscription page if requested */}
+      {showSubscriptionPage ? (
+        <SubscriptionPage
+          onBack={() => setShowSubscriptionPage(false)}
+          user={user}
+        />
+      ) : showUnsubscribePage ? (
+        <UnsubscribePage
+          onBack={() => setShowUnsubscribePage(false)}
+        />
+      ) : (
+        <>
+          <Header
+            sidebarOpen={sidebarOpen}
+            onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+            usageStatus={usageStatus}
+            onUpgrade={() => setShowSubscriptionPage(true)}
+            onUnsubscribe={() => setShowUnsubscribePage(true)}
+            userTier={userTier}
+          />
 
       <SearchHistorySidebar
         isOpen={sidebarOpen}
@@ -444,22 +496,23 @@ function AppContent() {
                 </div>
               )}
             </div>
+            
+            {/* Description */}
+            <div className="w-full max-w-2xl mt-12">
+              <p className="text-black font-bold text-left">
+                Reddit Search Tool helps you search entire reddit threads at once and then create clean AI generated summaries of them. Our tool is better than any chat bot alone. Give it a try!
+              </p>
+            </div>
           </section>
         )}
 
-        {/* Loading */}
+        {/* Loading Progress Console */}
         {isLoading && (
-          <section className="flex items-center justify-center min-h-[30vh]">
-            <div className="text-center">
-              <div className="w-12 h-12 mx-auto mb-4" style={{
-                border: '4px solid #000000',
-                borderTop: '4px solid transparent',
-                animation: 'spin 1s linear infinite',
-                borderRadius: '0'
-              }}></div>
-              <p className="text-black">Searching Reddit...</p>
-            </div>
-          </section>
+          <SearchProgressConsole
+            isVisible={isLoading}
+            searchQuery={searchQuery}
+            maxPosts={maxPosts}
+          />
         )}
 
         {/* Error */}
@@ -581,6 +634,8 @@ function AppContent() {
         searchCount={usageStatus?.searchCount || 0}
         limit={usageStatus?.limit || 1}
       />
+        </>
+      )}
     </div>
   );
 }
